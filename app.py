@@ -203,6 +203,10 @@ All three files are **CSV, UTF-8**. An id is the question number and must be the
 - **Vendor output:** `id, source_lang, target_lang, translation`, one row per question per language per direction.
   `source_lang` is English or Hindi; `target_lang` is one of the 13 languages.
 
+**Multiple-choice questions:** put the question and its four options in the **same cell**, one per line
+(`question`, `(A) ...`, `(B) ...`, `(C) ...`, `(D) ...`). Each question is scored as one text, and the vendor output
+must use the same layout. In Excel press Alt+Enter for a new line inside a cell; CSV keeps it.
+
 A language (or direction) with no vendor output gets **0 marks**. A missing single translation is scored as an empty sentence.
 """
     )

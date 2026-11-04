@@ -1,6 +1,121 @@
 # RFP Translation Quality Evaluator
 
-A web app that scores one vendor's translations for the RFP translation-quality criteria and turns the scores into marks:
+A web app that scores one vendor's translations for the RFP translation-quality criteria (BLEU, COMET, chrF++) and turns the scores into marks. You load three CSV files, press a button, and read the results on the same page.
+
+## Install and run (start here)
+
+### What you need
+
+| Item | Detail |
+|---|---|
+| Computer | Windows 10 or 11 (the helper scripts are for Windows; macOS and Linux steps are given below). 8 GB RAM or more. |
+| Python **3.12** | From https://www.python.org/downloads/ . Tested with 3.12. **Python 3.13 and newer do not work** (the COMET library does not install there). |
+| Internet | Needed for the first install (Python packages, including PyTorch) and, if you use COMET, to download the model once. After that it can run offline. |
+| Disk space | Several GB free (the Python environment plus the COMET model). |
+| Git | Optional. You can download the repository as a ZIP instead. |
+
+Check Python in a terminal (Command Prompt or PowerShell): `py -3.12 --version` should print `Python 3.12.x`.
+
+### Steps
+
+**1. Get the code**
+
+```
+git clone https://github.com/rfpcommittee/rfp-committee.git
+cd rfp-committee
+```
+
+(Or use *Code → Download ZIP* on GitHub, unzip it, and open a terminal in that folder.)
+
+**2. Install the libraries (once)**
+
+```
+setup_model_env.bat
+```
+
+This creates a `.venv` folder (a private Python 3.12 environment) and installs everything listed in `requirements.txt`: streamlit, pandas, sacreBLEU, sentencepiece and unbabel-comet (which brings PyTorch). It takes several minutes. If your network drops and an error appears, run the same command again; downloads already finished are reused.
+
+**3. Choose whether to compute COMET**
+
+COMET (10 of the 27 marks) needs a language model of a few GB, downloaded from Hugging Face the first time. BLEU and chrF++ need no model.
+
+- **Without COMET:** do nothing. The app works and the maximum is 17 marks.
+- **With COMET:**
+  1. Copy the settings file: `copy .env.example .env`
+  2. Open `.env` in Notepad and change `USE_MODEL=false` to `USE_MODEL=true`. Save.
+  3. Download the model now (recommended, so the app does not look stuck on the first run):
+     ```
+     .venv\Scripts\python -c "from comet import download_model; print(download_model('Unbabel/wmt22-comet-da'))"
+     ```
+     If the download breaks, run the same command again.
+
+**4. Start the app**
+
+```
+run_app.bat
+```
+
+Your browser opens at **http://localhost:8501**. If it does not, open that address yourself. Keep the terminal window open while you use the app. Press `Ctrl+C` in that window to stop it.
+
+**5. Check that it works**
+
+In the app, switch on **Use the dummy sample files**, then press **Evaluate**. You should see total marks under Option A and Option B. With COMET on, the total is out of 27 and the first run takes about 3 minutes on a laptop CPU (about 1.5 minutes to load the model, then the scoring); with COMET off it is out of 17 and takes a few seconds.
+
+**6. Use your own files**
+
+Switch the sample toggle off, upload your three CSV files (formats are described in [Input files](#input-files)), and press **Evaluate**.
+
+### Without the .bat files (manual, also for macOS and Linux)
+
+```
+py -3.12 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m streamlit run app.py --server.address localhost
+```
+
+On macOS or Linux use `python3.12 -m venv .venv`, then `.venv/bin/python -m pip install -r requirements.txt` and `.venv/bin/python -m streamlit run app.py`.
+
+### If something goes wrong
+
+| Problem | What to do |
+|---|---|
+| `Python 3.12 was not found` when running `setup_model_env.bat` | Install Python 3.12 and run it again. |
+| Install fails with timeout or "could not resolve pypi.org" | The network dropped. Run `setup_model_env.bat` again. |
+| App sidebar says the unbabel-comet library is not installed | The app was started with the wrong Python. Start it with `run_app.bat` (it uses `.venv`). |
+| Evaluate takes very long with COMET on | COMET is slow on a CPU; a large test set can take hours. Set `USE_MODEL=false` in `.env` to get BLEU and chrF++ right away, or run on a machine with a GPU (`COMET_GPUS=1`). |
+| The page does not open | Check that no other program uses port 8501, and that the terminal window is still open. |
+| After changing a package version the app breaks | Run `.venv\Scripts\python -m pip check`. The versions in `requirements.txt` are pinned on purpose (see below). |
+
+### Why the versions are pinned
+
+`unbabel-comet` needs `protobuf<5` and `numpy<2`. Because of that, `streamlit` is held at 1.46.1, `pyarrow` below 21, and `setuptools` below 81 (`torchmetrics` still imports `pkg_resources`). Changing these will probably break the install.
+
+### Settings in `.env`
+
+| Setting | Meaning |
+|---|---|
+| `USE_MODEL` | `true` computes COMET, `false` skips it |
+| `COMET_MODEL` | Hugging Face model name (default `Unbabel/wmt22-comet-da`) |
+| `COMET_CHECKPOINT` | Path to an already downloaded `.ckpt`, to run offline; leave empty to use `COMET_MODEL` |
+| `COMET_BATCH_SIZE` | Batch size; keep it the same for every vendor |
+| `COMET_GPUS` | `0` for CPU, `1` for one GPU |
+
+Restart the app after changing `.env`. If there is no `.env`, the app runs with COMET off.
+
+## How to use the app
+
+1. Type the vendor's name (optional) in the sidebar.
+2. **Step 1, Input files:** upload the three files. Each file is checked straight away and shows what it found, for example "6 questions, 13 of 13 languages", or an error that says what to fix.
+3. **Step 2, Evaluate:** press the button. A progress bar shows the stage.
+4. **Step 3, Results:**
+   - total marks under Option A and Option B, plus the COMET and chrF++ marks;
+   - a table of marks by language, and a second tab with every score for both directions;
+   - a chart comparing BLEU marks under Option A and Option B;
+   - two CSV downloads (per language, and the A/B summary) and an "Evaluation details" section with the library versions, sacreBLEU signatures and warnings.
+
+Which BLEU option counts: Option A is the default. Option B applies only if every vendor scores 0 BLEU marks under Option A, so compare with the other vendors before using it.
+
+## What it scores
 
 | Metric | Library / model | Max marks |
 |---|---|---|
@@ -8,11 +123,9 @@ A web app that scores one vendor's translations for the RFP translation-quality 
 | COMET | `Unbabel/wmt22-comet-da` (Hugging Face) | 10 |
 | chrF++ | sacreBLEU, `word_order=2` | 5 |
 
-For every one of the 13 target languages the app scores English → T and Hindi → T and uses the higher score. BLEU marks are shown under **both** Option A (Standard) and Option B (Lenient), side by side. Human evaluation (15 marks) is not part of this tool, so the maximum here is 27 marks (17 when COMET is switched off).
+For each of the 13 target languages the app scores English → T and Hindi → T, and the **Max** column is the higher of the two scores for that metric. BLEU marks are shown under **both** Option A (Standard) and Option B (Lenient), side by side. Human evaluation (15 marks) is not part of this tool, so the maximum here is 27 marks (17 when COMET is off). Only one vendor is evaluated at a time.
 
-Only one vendor is evaluated at a time.
-
-## What goes in
+## Input files
 
 Three CSV files, UTF-8 (in Excel: Save As, "CSV UTF-8"). The `id` is the question number and must match across the files.
 
@@ -24,71 +137,17 @@ Three CSV files, UTF-8 (in Excel: Save As, "CSV UTF-8"). The `id` is the questio
 
 - The 13 languages are: Assamese, Bengali, Gujarati, Kannada, Konkani, Malayalam, Manipuri (Meitei), Marathi, Odia, Punjabi, Tamil, Telugu, Urdu. Column and value names are matched ignoring upper/lower case.
 - Vendor output has one row per question, per language, per direction. `source_lang` is `English` or `Hindi`.
+- **Multiple-choice questions:** put the question and its four options in the same cell, one per line:
+  ```
+  What is the capital of India?
+  (A) Mumbai
+  (B) New Delhi
+  (C) Kolkata
+  (D) Chennai
+  ```
+  Each question is scored as one text (the whole cell), so the reference and the vendor output must use the same layout. In Excel use Alt+Enter for a new line inside a cell. CSV files keep the line breaks.
 - A language or direction with no vendor output gets **0 marks** (the score columns show 0). A single missing translation is scored as an empty sentence.
-- Examples are in `sample_data/`. They are **dummy**: the reference text is placeholder text that was not checked by native speakers, and the "vendor output" is the reference with some words removed. Do not use them as results. Recreate them with `python make_sample_data.py`.
-
-## Install
-
-You need Python 3.12 (3.10 or 3.11 also work). COMET does not install on Python 3.13 or newer.
-
-### Windows, quickest
-
-```
-setup_model_env.bat
-```
-
-This creates a `.venv` and installs everything in `requirements.txt`. Then start the app with `run_app.bat`.
-
-### Manual
-
-```
-py -3.12 -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m streamlit run app.py --server.address localhost
-```
-
-On macOS or Linux use `python3.12 -m venv .venv`, `.venv/bin/python -m pip install -r requirements.txt` and `.venv/bin/python -m streamlit run app.py`.
-
-The app opens at http://localhost:8501.
-
-### Why the versions are pinned
-
-`requirements.txt` pins a few packages on purpose. `unbabel-comet` needs `protobuf<5` and `numpy<2`; because of that `streamlit` is held at 1.46.1, `pyarrow` below 21, and `setuptools` below 81 (for `pkg_resources`). Changing these will probably break the install; run `pip check` after any change.
-
-## Turning COMET on
-
-COMET uses a model, which is downloaded from Hugging Face the first time (a few GB). Without it the app still computes BLEU and chrF++.
-
-1. Copy `.env.example` to `.env`.
-2. Set `USE_MODEL=true` in `.env`.
-3. Optional, to download the model before the first run:
-   ```
-   .venv\Scripts\python -c "from comet import download_model; print(download_model('Unbabel/wmt22-comet-da'))"
-   ```
-4. Restart the app.
-
-Settings in `.env`:
-
-| Setting | Meaning |
-|---|---|
-| `USE_MODEL` | `true` computes COMET, `false` skips it |
-| `COMET_MODEL` | Hugging Face model name (default `Unbabel/wmt22-comet-da`) |
-| `COMET_CHECKPOINT` | Path to an already downloaded `.ckpt`; leave empty to use `COMET_MODEL` |
-| `COMET_BATCH_SIZE` | Batch size; keep it the same for every vendor |
-| `COMET_GPUS` | `0` for CPU, `1` for one GPU. On a CPU, COMET is slow for a large test set |
-
-## Use
-
-1. Type the vendor's name (optional) in the sidebar.
-2. In step 1, upload the three files. Each file is checked straight away and shows what it found, for example "6 questions, 13 of 13 languages". Tick **Use the dummy sample files** to try the app first.
-3. In step 2, press **Evaluate**.
-4. In step 3, read the results:
-   - total marks under Option A and Option B, plus the COMET and chrF++ marks;
-   - a table of marks by language, and a second tab with every score for both directions;
-   - a chart comparing BLEU marks under Option A and Option B;
-   - two CSV downloads (per language, and the A/B summary) and an "Evaluation details" section with the library versions, sacreBLEU signatures and warnings.
-
-Which BLEU option counts: Option A is the default. Option B applies only if every vendor scores 0 BLEU marks under Option A, so compare with the other vendors before using it.
+- Examples are in `sample_data/`. They are **dummy**: the reference text is placeholder text that was not checked by native speakers, and the "vendor output" is the reference with some words removed or replaced. Do not use them as results. Recreate them with `python make_sample_data.py`.
 
 ## Marking rules
 

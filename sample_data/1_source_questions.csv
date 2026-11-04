@@ -1,7 +1,55 @@
 ﻿id,english,hindi
-Q001,What is the capital of India?,भारत की राजधानी क्या है?
-Q002,Which river is the longest in India?,भारत की सबसे लंबी नदी कौन-सी है?
-Q003,The sum of two numbers is 20 and their difference is 4. Find the numbers.,दो संख्याओं का योग 20 है और उनका अंतर 4 है। संख्याएँ ज्ञात कीजिए।
-Q004,Who is known as the Father of the Nation?,राष्ट्रपिता के नाम से किसे जाना जाता है?
-Q005,Water boils at 100 degrees Celsius at sea level.,समुद्र तल पर पानी 100 डिग्री सेल्सियस पर उबलता है।
-Q006,Choose the correct option from the following.,निम्नलिखित में से सही विकल्प चुनिए।
+Q001,"What is the capital of India?
+(A) Mumbai
+(B) New Delhi
+(C) Kolkata
+(D) Chennai","भारत की राजधानी क्या है?
+(A) मुंबई
+(B) नई दिल्ली
+(C) कोलकाता
+(D) चेन्नई"
+Q002,"Which of the following is a prime number?
+(A) 4
+(B) 6
+(C) 7
+(D) 9","निम्नलिखित में से कौन-सी अभाज्य संख्या है?
+(A) 4
+(B) 6
+(C) 7
+(D) 9"
+Q003,"The sum of two numbers is 20 and their difference is 4. Find the numbers.
+(A) 6 and 14
+(B) 8 and 12
+(C) 9 and 11
+(D) 10 and 10","दो संख्याओं का योग 20 है और उनका अंतर 4 है। संख्याएँ ज्ञात कीजिए।
+(A) 6 और 14
+(B) 8 और 12
+(C) 9 और 11
+(D) 10 और 10"
+Q004,"At what temperature does water boil at sea level?
+(A) 50 °C
+(B) 100 °C
+(C) 150 °C
+(D) 200 °C","समुद्र तल पर पानी किस तापमान पर उबलता है?
+(A) 50 °C
+(B) 100 °C
+(C) 150 °C
+(D) 200 °C"
+Q005,"What is the value of 12 × 5?
+(A) 50
+(B) 60
+(C) 65
+(D) 70","12 × 5 का मान क्या है?
+(A) 50
+(B) 60
+(C) 65
+(D) 70"
+Q006,"What is the chemical formula of water?
+(A) H2O
+(B) CO2
+(C) O2
+(D) NaCl","पानी का रासायनिक सूत्र क्या है?
+(A) H2O
+(B) CO2
+(C) O2
+(D) NaCl"
