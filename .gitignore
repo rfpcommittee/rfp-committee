@@ -1,0 +1,17 @@
+# Python environment and caches
+.venv/
+__pycache__/
+*.pyc
+
+# Local settings (copy .env.example to .env)
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Generated output and logs
+rfp_final_table.csv
+*.log
+
+# RFP clarification documents (not published yet; remove this line if the repository is private and you want them in it)
+ai_evaluation/
