@@ -1,11 +1,11 @@
 """
 Builds DUMMY input files in sample_data/ so the app can be tried without real data.
-Every question is a multiple-choice question: the question and its four options (A) to (D) sit in ONE cell,
-one per line.
+Every question is a multiple-choice question: the question and each option sit in their own column.
 
-  1_source_questions.csv        id, english, hindi
-  2_reference_translations.csv  id + 13 language columns (placeholder text, NOT checked by native speakers)
-  3_vendor_output.csv           id, source_lang, target_lang, translation
+  1_source_questions.csv        id, english_question, english_option_a..d, hindi_question, hindi_option_a..d
+  2_reference_translations.csv  id, then <language>_question, <language>_option_a..d for the 13 languages
+                                (placeholder text, NOT checked by native speakers)
+  3_vendor_output.csv           id, source_lang, target_lang, question, option_a..d
                                 (the reference with some words dropped/swapped and some options replaced;
                                  NOT a real vendor's output)
 
@@ -23,7 +23,6 @@ import evaluator as ev
 OUT = os.path.join(ev.BASE_DIR, "sample_data")
 
 IDS = ["Q001", "Q002", "Q003", "Q004", "Q005", "Q006"]
-LABELS = "ABCD"
 
 # ---- question stems: capital, prime number, sum and difference, boiling point, multiplication, formula of water
 STEMS = {
@@ -141,9 +140,8 @@ def options(q, lang):
 
 
 def question(lang, q):
-    """Question and its four options in one cell, one per line: stem, (A) .., (B) .., (C) .., (D) .."""
-    lines = [STEMS[lang][q]] + [f"({LABELS[i]}) {o}" for i, o in enumerate(options(q, lang))]
-    return "\n".join(lines)
+    """[stem, option A, option B, option C, option D] for one question in one language."""
+    return [STEMS[lang][q]] + list(options(q, lang))
 
 
 # share of words damaged per language for English source, Hindi source; None = no output for that direction
@@ -171,21 +169,23 @@ def damage_words(words, p, rng):
     return out
 
 
-def damage(text, p, rng):
-    """Damages the stem by dropping/swapping words. An option keeps its (A)..(D) label; a one-word option is
-    sometimes replaced by another option's text, as a translation error would."""
-    lines = text.split("\n")
-    contents = [ln.split(" ", 1)[1] for ln in lines[1:]]
-    out = [" ".join(damage_words(lines[0].split(" "), p, rng))]
-    for ln in lines[1:]:
-        label, content = ln.split(" ", 1)
+def damage(parts, p, rng):
+    """Damages the stem by dropping/swapping words. A one-word option is sometimes replaced by another option's
+    text, as a translation error would."""
+    contents = parts[1:]
+    out = [" ".join(damage_words(parts[0].split(" "), p, rng))]
+    for content in contents:
         words = content.split(" ")
         if len(words) > 1:
             content = " ".join(damage_words(words, p, rng))
         elif rng.random() < p / 3:
             content = rng.choice([c for c in contents if c != content])
-        out.append(f"{label} {content}")
-    return "\n".join(out)
+        out.append(content)
+    return out
+
+
+def slug(lang):
+    return ev._slug(lang)
 
 
 def write(name, header, rows):
@@ -198,10 +198,13 @@ def write(name, header, rows):
 def main():
     os.makedirs(OUT, exist_ok=True)
     n = len(IDS)
-    write("1_source_questions.csv", ["id", "english", "hindi"],
-          [[IDS[k], question("English", k), question("Hindi", k)] for k in range(n)])
-    write("2_reference_translations.csv", ["id"] + ev.LANGUAGES,
-          [[IDS[k]] + [question(lang, k) for lang in ev.LANGUAGES] for k in range(n)])
+    fields = ev.FIELDS
+    head = lambda prefix: [f"{prefix}_{f}" for f in fields]   # noqa: E731
+    write("1_source_questions.csv", ["id"] + head("english") + head("hindi"),
+          [[IDS[k]] + question("English", k) + question("Hindi", k) for k in range(n)])
+    ref_head = ["id"] + [c for lang in ev.LANGUAGES for c in head(slug(lang))]
+    write("2_reference_translations.csv", ref_head,
+          [[IDS[k]] + [x for lang in ev.LANGUAGES for x in question(lang, k)] for k in range(n)])
 
     rng = random.Random(7)
     rows = []
@@ -212,8 +215,8 @@ def main():
             for k, qid in enumerate(IDS):
                 if qid in SKIP_ROWS.get((lang, s), set()):
                     continue
-                rows.append([qid, s, lang, damage(question(lang, k), p, rng)])
-    write("3_vendor_output.csv", ["id", "source_lang", "target_lang", "translation"], rows)
+                rows.append([qid, s, lang] + damage(question(lang, k), p, rng))
+    write("3_vendor_output.csv", ["id", "source_lang", "target_lang"] + fields, rows)
     print(f"Wrote 3 files to {OUT}  ({n} questions, {len(rows)} vendor rows)")
 
 

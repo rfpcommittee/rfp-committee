@@ -59,7 +59,7 @@ Your browser opens at **http://localhost:8501**. If it does not, open that addre
 
 **5. Check that it works**
 
-In the app, switch on **Use the dummy sample files**, then press **Evaluate**. You should see total marks under Option A and Option B. With COMET on, the total is out of 27 and the first run takes about 3 minutes on a laptop CPU (about 1.5 minutes to load the model, then the scoring); with COMET off it is out of 17 and takes a few seconds.
+In the app, switch on **Use the dummy sample files**, then press **Evaluate**. You should see the total marks (BLEU under Option B). With COMET on, the total is out of 27 and the first run takes about 3 minutes on a laptop CPU (about 1.5 minutes to load the model, then the scoring); with COMET off it is out of 17 and takes a few seconds.
 
 **6. Use your own files**
 
@@ -104,16 +104,13 @@ Restart the app after changing `.env`. If there is no `.env`, the app runs with 
 
 ## How to use the app
 
-1. Type the vendor's name (optional) in the sidebar.
-2. **Step 1, Input files:** upload the three files. Each file is checked straight away and shows what it found, for example "6 questions, 13 of 13 languages", or an error that says what to fix.
-3. **Step 2, Evaluate:** press the button. A progress bar shows the stage.
-4. **Step 3, Results:**
-   - total marks under Option A and Option B, plus the COMET and chrF++ marks;
-   - a table of marks by language, and a second tab with every score for both directions;
-   - a chart comparing BLEU marks under Option A and Option B;
-   - two CSV downloads (per language, and the A/B summary) and an "Evaluation details" section with the library versions, sacreBLEU signatures and warnings.
-
-Which BLEU option counts: Option A is the default. Option B applies only if every vendor scores 0 BLEU marks under Option A, so compare with the other vendors before using it.
+1. **Step 1, Input files:** type the **vendor name** (required; it appears in the results and in the exported CSV files and file names), then upload the three files. Each file is checked straight away and shows what it found, for example "6 questions, 13 of 13 languages", or an error that says what to fix.
+2. **Step 2, Evaluate:** press the button. A progress bar shows the stage.
+3. **Step 3, Results:**
+   - total marks (BLEU Option B, COMET, chrF++);
+   - one table with, for each metric, the `En→T` score, the `Hi→T` score, the `Max` (the higher of the two) and the marks;
+   - a chart of the BLEU marks by language;
+   - two CSV downloads (per language, and the summary), both carrying the vendor name and an "Evaluation details" section with the library versions, sacreBLEU signatures and warnings.
 
 ## What it scores
 
@@ -123,42 +120,39 @@ Which BLEU option counts: Option A is the default. Option B applies only if ever
 | COMET | `Unbabel/wmt22-comet-da` (Hugging Face) | 10 |
 | chrF++ | sacreBLEU, `word_order=2` | 5 |
 
-For each of the 13 target languages the app scores English → T and Hindi → T, and the **Max** column is the higher of the two scores for that metric. BLEU marks are shown under **both** Option A (Standard) and Option B (Lenient), side by side. Human evaluation (15 marks) is not part of this tool, so the maximum here is 27 marks (17 when COMET is off). Only one vendor is evaluated at a time.
+For each of the 13 target languages the app scores English → T and Hindi → T, and the **Max** column is the higher of the two scores for that metric. BLEU marks use **Option B (Lenient)**. Human evaluation (15 marks) is not part of this tool, so the maximum here is 27 marks (17 when COMET is off). Only one vendor is evaluated at a time.
 
 ## Input files
 
-Three CSV files, UTF-8 (in Excel: Save As, "CSV UTF-8"). The `id` is the question number and must match across the files.
+Three CSV files, UTF-8 (in Excel: Save As, "CSV UTF-8"). Every question is a multiple-choice question: the **question and each of the four options sit in their own columns**. The `id` is the question number and must match across the files.
 
 | File | Columns |
 |---|---|
-| Source questions | `id, english, hindi` |
-| Reference translations | `id`, then one column per language |
-| Vendor output | `id, source_lang, target_lang, translation` |
+| 1. Source questions | `id`, `english_question`, `english_option_a`, `english_option_b`, `english_option_c`, `english_option_d`, `hindi_question`, `hindi_option_a`, `hindi_option_b`, `hindi_option_c`, `hindi_option_d` |
+| 2. Reference translations | `id`, then for each of the 13 languages `<language>_question`, `<language>_option_a`, `<language>_option_b`, `<language>_option_c`, `<language>_option_d` (for example `tamil_question`, `tamil_option_a`, ...) |
+| 3. Vendor output | `id`, `source_lang`, `target_lang`, `question`, `option_a`, `option_b`, `option_c`, `option_d` |
 
-- The 13 languages are: Assamese, Bengali, Gujarati, Kannada, Konkani, Malayalam, Manipuri (Meitei), Marathi, Odia, Punjabi, Tamil, Telugu, Urdu. Column and value names are matched ignoring upper/lower case.
+- Language prefixes for file 2: `assamese, bengali, gujarati, kannada, konkani, malayalam, manipuri_meitei, marathi, odia, punjabi, tamil, telugu, urdu` (13 languages). In file 3, `target_lang` is the language name (`Tamil`, `Manipuri (Meitei)` or `manipuri_meitei`; any case).
 - Vendor output has one row per question, per language, per direction. `source_lang` is `English` or `Hindi`.
-- **Multiple-choice questions:** put the question and its four options in the same cell, one per line:
-  ```
-  What is the capital of India?
-  (A) Mumbai
-  (B) New Delhi
-  (C) Kolkata
-  (D) Chennai
-  ```
-  Each question is scored as one text (the whole cell), so the reference and the vendor output must use the same layout. In Excel use Alt+Enter for a new line inside a cell. CSV files keep the line breaks.
+- Example, source file, one row:
+
+  | id | english_question | english_option_a | english_option_b | english_option_c | english_option_d | hindi_question | ... |
+  |---|---|---|---|---|---|---|---|
+  | Q001 | What is the capital of India? | Mumbai | New Delhi | Kolkata | Chennai | भारत की राजधानी क्या है? | ... |
+
+- The question and its four options are joined (one per line, without the A to D labels) and scored as **one text**, so the reference and the vendor output must be arranged the same way. Column names are matched ignoring upper and lower case.
 - A language or direction with no vendor output gets **0 marks** (the score columns show 0). A single missing translation is scored as an empty sentence.
-- Examples are in `sample_data/`. They are **dummy**: the reference text is placeholder text that was not checked by native speakers, and the "vendor output" is the reference with some words removed or replaced. Do not use them as results. Recreate them with `python make_sample_data.py`.
+- Examples are in `sample_data/`. They are **dummy**: the reference text is placeholder text that was not checked by native speakers, and the "vendor output" is the reference with some words removed or replaced. Do not use them as results. Recreate them with `python make_sample_data.py` (close the files in Excel first).
 
 ## Marking rules
 
 | Metric | Rule (each slab starts at the value shown, on the unrounded score) |
 |---|---|
-| BLEU, Option A | 70 or more: 12 · 60 to below 70: 10 · 50 to below 60: 6 · below 50: 0 |
-| BLEU, Option B | 70 or more: 12 · below 70: 12 minus 1 for every 10 points (or part of 10) below 70, minimum 0 |
+| BLEU (Option B) | 70 or more: 12 · 60 to below 70: 11 · 50 to below 60: 10 · 40 to below 50: 9 · 30 to below 40: 8 · below 30: 0 |
 | COMET | 0.85 or more: 10 · 0.75 to below 0.85: 7 · 0.65 to below 0.75: 4 · below 0.65: 0 |
 | chrF++ | 75 or more: 5 · 65 to below 75: 3 · below 65: 0 |
 
-The marks of each metric are the average of the 13 languages (equal weight). A language with no vendor output gets 0 marks under every rule, including Option B.
+The marks of each metric are the average of the 13 languages (equal weight). A language with no vendor output gets 0 marks under every rule.
 
 The rules live in one place, `rfp_final_table.py`. The app and the command-line script both use it.
 
@@ -167,10 +161,10 @@ The rules live in one place, `rfp_final_table.py`. The app and the command-line 
 `rfp_final_table.py` also works on its own. It merges three result files (`sarvam_bleu_results.csv`, `sarvam_comet_results.csv`, `sarvam_chrf_results.csv`, each with a `Target` column and a `Max(...)` column) into one table:
 
 ```
-python rfp_final_table.py --bleu_option A --bidder "Vendor" --out final_table.csv
+python rfp_final_table.py --bleu_option B --bidder "Vendor" --out final_table.csv
 ```
 
-Unlike the app, it adds up the marks of the languages instead of averaging them, and it uses one BLEU rule per run (`--bleu_option A`, `B` or `best`) instead of showing A and B together. Use the app for the official marks.
+Unlike the app, it adds up the marks of the languages instead of averaging them, and it uses one BLEU rule per run (`--bleu_option B` is the one the app uses; `A` and `best` are older options kept for comparison). Use the app for the official marks.
 
 ## Files
 

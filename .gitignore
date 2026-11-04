@@ -223,5 +223,3 @@ __marimo__/
 # Generated output of rfp_final_table.py
 rfp_final_table.csv
 
-# RFP clarification documents (not published yet; remove this line if the repository is private and you want them in it)
-ai_evaluation/

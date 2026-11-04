@@ -2,9 +2,11 @@
 Evaluation engine for the RFP translation-quality marks (BLEU, COMET, chrF++).
 
 One vendor is evaluated at a time from three CSV files:
-  1. source questions         id, english, hindi
-  2. reference translations   id + one column per target language (13 languages)
-  3. vendor output            id, source_lang, target_lang, translation
+  1. source questions         id, english_question, english_option_a..d, hindi_question, hindi_option_a..d
+  2. reference translations   id, then <language>_question, <language>_option_a..d for each of the 13 languages
+  3. vendor output            id, source_lang, target_lang, question, option_a, option_b, option_c, option_d
+Every question is a multiple-choice question; its question and four options are joined (one per line) and scored
+as one text.
 
 Scores follow the RFP clarification (Run1): sacreBLEU corpus BLEU with the flores200 tokenizer, chrF++ (word_order=2),
 COMET (Unbabel/wmt22-comet-da) and the higher of the English->T and Hindi->T scores for each language.
@@ -13,6 +15,7 @@ All slab / marking rules stay in rfp_final_table.py; this file only computes sco
 import importlib.metadata as md
 import math
 import os
+import re
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -25,6 +28,8 @@ LANGUAGES = ["Assamese", "Bengali", "Gujarati", "Kannada", "Konkani", "Malayalam
              "Marathi", "Odia", "Punjabi", "Tamil", "Telugu", "Urdu"]
 SOURCES = ("English", "Hindi")
 SHORT = {"English": "En", "Hindi": "Hi"}
+FIELDS = ["question", "option_a", "option_b", "option_c", "option_d"]
+_COL = re.compile(r"^(.+)_(" + "|".join(FIELDS) + r")$")
 
 NO_OUTPUT = "No output"
 NO_REFERENCE = "No reference"
@@ -39,7 +44,12 @@ class ModelUnavailable(RuntimeError):
 
 
 def _key(s):
-    return "".join(str(s).lower().split())
+    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+
+
+def _slug(lang):
+    """Column prefix of a language: lower case, words joined by underscores (manipuri_meitei)."""
+    return re.sub(r"[^a-z0-9]+", "_", lang.lower()).strip("_")
 
 
 _LANG_MAP = {_key(lang): lang for lang in LANGUAGES}
@@ -111,44 +121,68 @@ def _check_ids(df, label):
         raise InputError(f"{label}: duplicate id(s) {dup[:5]}.")
 
 
+def _clean(df, cols):
+    """Joins one MCQ (question + options A-D, given as separate cells) into one text, one part per line."""
+    return df[cols].apply(lambda r: "\n".join(v for v in r if v), axis=1)
+
+
+def _fields(prefix):
+    return [f"{prefix}_{f}" for f in FIELDS]
+
+
 def read_source(file):
     label = "Source questions"
-    df = _need(_read_csv(file, label), ["id", "english", "hindi"], label)[["id", "english", "hindi"]]
+    need = ["id"] + _fields("english") + _fields("hindi")
+    df = _need(_read_csv(file, label), need, label)
     _check_ids(df, label)
-    blank = df.loc[(df["english"] == "") | (df["hindi"] == ""), "id"].tolist()
+    blank = df.loc[(df[need[1:]] == "").any(axis=1), "id"].tolist()
     if blank:
-        raise InputError(f"{label}: English or Hindi text is empty for id(s) {blank[:5]}.")
-    return df
+        raise InputError(f"{label}: the question or an option is empty for id(s) {blank[:5]}.")
+    return pd.DataFrame({"id": df["id"], "english": _clean(df, _fields("english")),
+                         "hindi": _clean(df, _fields("hindi"))})
 
 
 def read_refs(file):
-    """Returns a frame with 'id' + one column per recognised language. attrs['ignored'] lists other columns."""
+    """Returns a frame with 'id' + one joined MCQ text column per recognised language.
+    attrs['ignored'] lists columns that were not used."""
     label = "Reference translations"
     df = _need(_read_csv(file, label), ["id"], label)
     _check_ids(df, label)
-    langs, ignored = {}, []
+    langs, ignored = {}, []                      # language -> {field: column}
     for c in df.columns:
         if c == "id":
             continue
-        lang = _LANG_MAP.get(_key(c))
+        m = _COL.match(c.lower().strip())
+        lang = _LANG_MAP.get(_key(m.group(1))) if m else None
         if lang is None:
             ignored.append(c)
-        elif lang in langs:
-            raise InputError(f"{label}: language '{lang}' appears twice ({langs[lang]!r} and {c!r}).")
-        else:
-            langs[lang] = c
+            continue
+        f = langs.setdefault(lang, {})
+        if m.group(2) in f:
+            raise InputError(f"{label}: column for {lang} / {m.group(2)} appears twice ({f[m.group(2)]!r} and {c!r}).")
+        f[m.group(2)] = c
     if not langs:
-        raise InputError(f"{label}: no language columns recognised. Expected columns named like: {', '.join(LANGUAGES)}.")
-    out = df[["id"] + list(langs.values())].rename(columns={v: k for k, v in langs.items()})
+        raise InputError(f"{label}: no language columns recognised. Expected columns like tamil_question, "
+                         f"tamil_option_a, tamil_option_b, tamil_option_c, tamil_option_d.")
+    out = {"id": df["id"]}
+    for lang, f in langs.items():
+        gap = [x for x in FIELDS if x not in f]
+        if gap:
+            raise InputError(f"{label}: {lang} is missing column(s) {[_slug(lang) + '_' + x for x in gap]}.")
+        out[lang] = _clean(df.rename(columns={v: k for k, v in f.items()}), FIELDS)
+    out = pd.DataFrame(out)
     out.attrs["ignored"] = ignored
     return out
 
 
 def read_vendor(file):
-    """Returns the usable rows. attrs['ignored_rows'] / attrs['ignored_examples'] describe rows that were skipped."""
+    """Returns the usable rows (id, source_lang, target_lang, translation = joined MCQ text).
+    attrs['ignored_rows'] / attrs['ignored_examples'] describe rows that were skipped."""
     label = "Vendor output"
-    df = _need(_read_csv(file, label), ["id", "source_lang", "target_lang", "translation"], label)
-    df = df[["id", "source_lang", "target_lang", "translation"]].copy()
+    df = _need(_read_csv(file, label), ["id", "source_lang", "target_lang"] + FIELDS, label)
+    df = df[["id", "source_lang", "target_lang"] + FIELDS].copy()
+    df["translation"] = _clean(df, FIELDS)
+    df = df[["id", "source_lang", "target_lang", "translation"]]
     src = df["source_lang"].map(lambda s: _SRC_MAP.get(_key(s)))
     tgt = df["target_lang"].map(lambda s: _LANG_MAP.get(_key(s)))
     bad = src.isna() | tgt.isna() | (df["id"] == "")
