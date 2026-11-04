@@ -12,14 +12,14 @@ Marks are RE-COMPUTED here from the Max scores, so this file is the single place
 holds the rules:
 
   BLEU   Option A : >=70 ->12 | 60-<70 ->10 | 50-<60 ->6 | <50 ->0
-         Option B : >=70 ->12 | below 70: 12 - ceil((70-BLEU)/10), floored at 0
+         Option B : >=70 ->12 | 60-<70 ->11, 50-<60 ->10 ... 30-<40 ->8 | below 30 -> 0
          "best"   : the higher of A and B for each language
   COMET  : >=0.85 ->10 | 0.75-<0.85 ->7 | 0.65-<0.75 ->4 | <0.65 ->0
   chrF++ : >=75 ->5    | 65-<75 ->3     | <65 ->0
   (all slabs half-open on the unrounded score)
 
 Usage:
-    python rfp_final_table.py                       # BLEU Option A (default)
+    python rfp_final_table.py                       # BLEU Option B (default)
     python rfp_final_table.py --bleu_option B
     python rfp_final_table.py --bleu_option best
     python rfp_final_table.py --bidder "Sarvam" --out final_table.csv
@@ -39,7 +39,12 @@ def bleu_a(b):
 
 
 def bleu_b(b):
-    return 12 if b >= 70 else max(0, 12 - math.ceil((70 - b) / 10))
+    """>=70 -> 12, then one mark less per 10 points: 60-<70 -> 11 ... 30-<40 -> 8. Below 30 -> 0."""
+    if b >= 70:
+        return 12
+    if b < 30:
+        return 0
+    return 12 - math.ceil((70 - b) / 10)
 
 
 def comet_marks(c):
@@ -64,7 +69,7 @@ def load(path, max_col, new_name):
     return tidy(pd.read_csv(path), max_col, new_name, path)
 
 
-def build_table(parts, bleu_option="A"):
+def build_table(parts, bleu_option="B"):
     """parts: list of tidy frames (Target + 'Max BLEU' / 'Max COMET' / 'Max chrF++').
     Returns the final table including the OVERALL row."""
     df = parts[0]
@@ -108,7 +113,7 @@ def main():
     ap.add_argument("--bleu", default="sarvam_bleu_results.csv")
     ap.add_argument("--comet", default="sarvam_comet_results.csv")
     ap.add_argument("--chrf", default="sarvam_chrf_results.csv")
-    ap.add_argument("--bleu_option", choices=["A", "B", "best"], default="A",
+    ap.add_argument("--bleu_option", choices=["A", "B", "best"], default="B",
                     help="which BLEU marking rule to use (default A)")
     ap.add_argument("--bidder", default="")
     ap.add_argument("--out", default="rfp_final_table.csv")

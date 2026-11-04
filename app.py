@@ -2,7 +2,7 @@
 RFP Translation-Quality Evaluator - web UI.
 
 Three CSV files go in (source questions, reference translations, one vendor's output); BLEU, COMET and chrF++ scores
-and marks come out, with BLEU marks shown under both Option A and Option B.
+and marks come out, with BLEU marks under Option B.
 The scoring engine is evaluator.py; the marking rules are in rfp_final_table.py.
 
 Run:  streamlit run app.py     (or double-click run_app.bat)
@@ -80,7 +80,7 @@ st.markdown(
     <div class="hero">
       <h1>{icon("chart", 30)}RFP Translation Quality Evaluator</h1>
       <p>Load the source questions, the 13-language reference translations and one vendor's output. You get BLEU, COMET
-         and chrF++ scores with marks, and BLEU marks under both Option A and Option B.</p>
+         and chrF++ scores with marks, and BLEU marks under Option B.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -105,8 +105,6 @@ MODEL_ON = ev.use_model()
 # ---------- sidebar ----------
 with st.sidebar:
     st.markdown(f'<div class="side-h">{icon("sliders")}Settings</div>', unsafe_allow_html=True)
-    bidder = st.text_input("Vendor name", placeholder="e.g. Sarvam")
-
     st.markdown('<div class="rule">COMET model</div>', unsafe_allow_html=True)
     if MODEL_ON:
         st.markdown('<span class="tag on">ON</span> &nbsp;set by USE_MODEL in .env', unsafe_allow_html=True)
@@ -123,8 +121,8 @@ with st.sidebar:
     st.markdown(
         f"""
 <div class="rule">BLEU <small>(max {rft.BLEU_MAX})</small></div>
-<b>Standard (Option A)</b><br>{chips(("≥70", 12), ("60 to &lt;70", 10), ("50 to &lt;60", 6), ("&lt;50", 0))}<br>
-<b>Lenient (Option B)</b><br>{chips(("≥70", 12), ("below 70", "12 − ⌈(70−BLEU)/10⌉, min 0"))}
+<b>Option B (Lenient)</b><br>{chips(("≥70", 12), ("60 to &lt;70", 11), ("50 to &lt;60", 10), ("40 to &lt;50", 9), ("30 to &lt;40", 8), ("below 30", 0))}
+<small style="opacity:.7">Rule: 12 minus 1 for every 10 points (or part of 10) below 70, down to 8 at 30. Below 30 is 0. A language with no output gets 0.</small>
 <div class="rule">COMET <small>(max {rft.COMET_MAX})</small></div>
 {chips(("≥0.85", 10), ("≥0.75", 7), ("≥0.65", 4), ("below", 0))}
 <div class="rule">chrF++ <small>(max {rft.CHRF_MAX})</small></div>
@@ -140,11 +138,11 @@ step(1, "upload", "Input files")
 
 FILES = [
     dict(key="source", title="Source questions", sub="English and Hindi", icon="book",
-         cols="id, english, hindi", reader=ev.read_source, sample="1_source_questions.csv"),
-    dict(key="refs", title="Reference translations", sub="Human translations in the 13 languages", icon="languages",
-         cols="id, then one column per language", reader=ev.read_refs, sample="2_reference_translations.csv"),
+         cols="id, english_question, english_option_a..d, hindi_question, hindi_option_a..d", reader=ev.read_source, sample="1_source_questions.csv"),
+    dict(key="refs", title="Reference translations", sub="Reference translations in the 13 languages", icon="languages",
+         cols="id, then tamil_question, tamil_option_a..d and so on for each language", reader=ev.read_refs, sample="2_reference_translations.csv"),
     dict(key="vendor", title="Vendor output", sub="One vendor at a time", icon="users",
-         cols="id, source_lang, target_lang, translation", reader=ev.read_vendor, sample="3_vendor_output.csv"),
+         cols="id, source_lang, target_lang, question, option_a..d", reader=ev.read_vendor, sample="3_vendor_output.csv"),
 ]
 
 
@@ -158,6 +156,13 @@ def preview(key, df):
     pairs = df.groupby(["source_lang", "target_lang"]).ngroups
     return f"{len(df)} rows, {pairs} of {TOTAL_LANGS * 2} language pairs"
 
+
+bidder = st.text_input(
+    "Vendor name (required)", placeholder="e.g. Sarvam", key="vendor_name",
+    help="Shown in the results and used in the exported CSV files (inside the file and in the file name).",
+)
+if not bidder.strip():
+    st.caption("Enter the vendor name first. Evaluate stays disabled until you do.")
 
 use_sample = st.toggle(
     "Use the dummy sample files (to try the app; not real data)",
@@ -195,17 +200,20 @@ for col, f in zip(st.columns(3), FILES):
 with st.expander("File format help"):
     st.markdown(
         """
-All three files are **CSV, UTF-8**. An id is the question number and must be the same in all three files.
+All three files are **CSV, UTF-8**. Every question is a multiple-choice question: the **question and each option
+(A to D) go in their own columns**. The `id` is the question number and must be the same in all three files.
 
-- **Source questions:** `id, english, hindi`, one row per question.
-- **Reference translations:** `id` plus one column per target language, named exactly like the languages
-  (Assamese, Bengali, Gujarati, Kannada, Konkani, Malayalam, Manipuri (Meitei), Marathi, Odia, Punjabi, Tamil, Telugu, Urdu).
-- **Vendor output:** `id, source_lang, target_lang, translation`, one row per question per language per direction.
-  `source_lang` is English or Hindi; `target_lang` is one of the 13 languages.
+- **Source questions:** `id, english_question, english_option_a, english_option_b, english_option_c, english_option_d,
+  hindi_question, hindi_option_a, hindi_option_b, hindi_option_c, hindi_option_d`, one row per question.
+- **Reference translations:** `id`, then for each language `<language>_question, <language>_option_a ... <language>_option_d`,
+  for example `tamil_question, tamil_option_a, tamil_option_b, tamil_option_c, tamil_option_d`. Language prefixes:
+  `assamese, bengali, gujarati, kannada, konkani, malayalam, manipuri_meitei, marathi, odia, punjabi, tamil, telugu, urdu`.
+- **Vendor output:** `id, source_lang, target_lang, question, option_a, option_b, option_c, option_d`, one row per
+  question per language per direction. `source_lang` is English or Hindi; `target_lang` is one of the 13 languages
+  (`Manipuri (Meitei)` or `manipuri_meitei` both work).
 
-**Multiple-choice questions:** put the question and its four options in the **same cell**, one per line
-(`question`, `(A) ...`, `(B) ...`, `(C) ...`, `(D) ...`). Each question is scored as one text, and the vendor output
-must use the same layout. In Excel press Alt+Enter for a new line inside a cell; CSV keeps it.
+The question and its four options are joined (one per line) and scored as **one text**. Column names are matched
+ignoring upper and lower case.
 
 A language (or direction) with no vendor output gets **0 marks**. A missing single translation is scored as an empty sentence.
 """
@@ -213,9 +221,9 @@ A language (or direction) with no vendor output gets **0 marks**. A missing sing
 
 # ---------- step 2: evaluate ----------
 step(2, "cpu", "Evaluate")
-ready = all(v is not None for v in parsed.values())
+ready = all(v is not None for v in parsed.values()) and bool(bidder.strip())
 if not ready:
-    left = [f["title"] for f in FILES if parsed[f["key"]] is None]
+    left = (["Vendor name"] if not bidder.strip() else []) + [f["title"] for f in FILES if parsed[f["key"]] is None]
     st.caption("Waiting for: " + ", ".join(left))
 run = st.button("Evaluate", type="primary", icon=":material/play_arrow:", disabled=not ready)
 
@@ -252,27 +260,23 @@ if saved:
         st.info("COMET was not computed (USE_MODEL is false), so the maximum is "
                 f"{s['max_total']:g} marks, not {rft.BLEU_MAX + rft.COMET_MAX + rft.CHRF_MAX}.")
 
-    k = st.columns(4)
-    k[0].metric("Total, Option A (Standard)", f"{s['total_a']:.2f} / {s['max_total']:g}",
-                f"BLEU {s['bleu_a']:.2f} / {rft.BLEU_MAX}   |   {s['pct_a']:.1f}%", delta_color="off")
-    k[1].metric("Total, Option B (Lenient)", f"{s['total_b']:.2f} / {s['max_total']:g}",
+    k = st.columns(3)
+    k[0].metric("Total (Option B)", f"{s['total_b']:.2f} / {s['max_total']:g}",
                 f"BLEU {s['bleu_b']:.2f} / {rft.BLEU_MAX}   |   {s['pct_b']:.1f}%", delta_color="off")
     if s["with_comet"]:
-        k[2].metric("COMET marks", f"{s['comet']:.2f} / {rft.COMET_MAX}", "same under A and B", delta_color="off")
+        k[1].metric("COMET marks", f"{s['comet']:.2f} / {rft.COMET_MAX}")
     else:
-        k[2].metric("COMET marks", "Not computed", "USE_MODEL=false", delta_color="off")
-    k[3].metric("chrF++ marks", f"{s['chrf']:.2f} / {rft.CHRF_MAX}", "same under A and B", delta_color="off")
+        k[1].metric("COMET marks", "Not computed", "USE_MODEL=false", delta_color="off")
+    k[2].metric("chrF++ marks", f"{s['chrf']:.2f} / {rft.CHRF_MAX}")
 
     st.markdown(
         '<small style="opacity:.75">Each metric\'s marks are the average over all 13 languages. '
-        "Option A is the default. Option B applies only if <b>every</b> vendor scores 0 BLEU marks under Option A, "
-        "so compare with the other vendors before using Option B. "
+        "BLEU marks use Option B. "
         "Human evaluation (15 marks) is not part of this tool.</small>",
         unsafe_allow_html=True,
     )
 
-    mark_max = {"BLEU Marks (A)": rft.BLEU_MAX, "BLEU Marks (B)": rft.BLEU_MAX,
-                "COMET Marks": rft.COMET_MAX, "chrF++ Marks": rft.CHRF_MAX}
+    mark_max = {"BLEU Marks (B)": rft.BLEU_MAX, "COMET Marks": rft.COMET_MAX, "chrF++ Marks": rft.CHRF_MAX}
 
     def color_marks(col):
         mx = mark_max.get(col.name)
@@ -304,12 +308,11 @@ if saved:
             styler = styler.apply(lambda r: ["font-weight:700" if r.name == len(df) - 1 else ""] * len(r), axis=1)
         st.dataframe(styler, hide_index=True, use_container_width=True, height=36 * (len(df) + 1) + 3)
 
-    tab1, tab2 = st.tabs(["Marks by language", "All scores (both directions)"])
-    with tab1:
-        cols = ["Language", "Status", "Max BLEU", "BLEU Marks (A)", "BLEU Marks (B)"]
+    if True:
+        cols = ["Language", "Status", "BLEU En→T", "BLEU Hi→T", "Max BLEU", "BLEU Marks (B)"]
         if s["with_comet"]:
-            cols += ["Max COMET", "COMET Marks"]
-        cols += ["Max chrF++", "chrF++ Marks"]
+            cols += ["COMET En→T", "COMET Hi→T", "Max COMET", "COMET Marks"]
+        cols += ["chrF++ En→T", "chrF++ Hi→T", "Max chrF++", "chrF++ Marks"]
         view = table[cols].copy()
         avg = {c: view[c].mean() for c in mark_max if c in view.columns}
         avg_row = {c: float("nan") for c in view.columns}
@@ -323,32 +326,29 @@ if saved:
             '<span class="dot" style="background:rgba(46,160,67,.6);margin-left:0"></span>full marks'
             '<span class="dot" style="background:rgba(210,153,34,.6)"></span>partial'
             '<span class="dot" style="background:rgba(218,54,51,.6)"></span>zero'
-            '<br><small style="opacity:.7">A language with no vendor output shows 0 for its scores and 0 marks.</small>',
+            '<br><small style="opacity:.7">Max is the higher of En→T and Hi→T. – means no output for that direction. '
+            "A language with no vendor output shows 0 for its scores and 0 marks.</small>",
             unsafe_allow_html=True,
         )
-    with tab2:
-        show(table)
-        st.caption("– means the vendor gave no output for that direction. The Max column uses the higher available score.")
 
-    st.markdown(f'<div class="fcard" style="margin-top:1rem">{icon("languages")}BLEU marks, Option A and Option B</div>',
+    st.markdown(f'<div class="fcard" style="margin-top:1rem">{icon("languages")}BLEU marks by language (Option B)</div>',
                 unsafe_allow_html=True)
-    st.bar_chart(table.set_index("Language")[["BLEU Marks (A)", "BLEU Marks (B)"]], stack=False)
+    st.bar_chart(table.set_index("Language")[["BLEU Marks (B)"]])
 
     summary_df = pd.DataFrame([
-        {"Vendor": who, "BLEU option": "A (Standard)", "BLEU marks": s["bleu_a"], "COMET marks": s["comet"],
-         "chrF++ marks": s["chrf"], "Total": s["total_a"], "Max": s["max_total"], "Percent": s["pct_a"]},
         {"Vendor": who, "BLEU option": "B (Lenient)", "BLEU marks": s["bleu_b"], "COMET marks": s["comet"],
          "chrF++ marks": s["chrf"], "Total": s["total_b"], "Max": s["max_total"], "Percent": s["pct_b"]},
     ]).round(2)
-    detail_df = table.copy()
+    detail_df = table.drop(columns=["BLEU Marks (A)"])
     detail_df.insert(0, "Vendor", who)
     stem = re.sub(r"[^A-Za-z0-9_-]+", "_", who).strip("_") or "vendor"
 
+    st.caption(f"Exported files carry the vendor name “{who}” in a Vendor column and in the file name.")
     d1, d2 = st.columns(2)
     d1.download_button("Download per-language results (CSV)", detail_df.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"{stem}_per_language.csv", mime="text/csv", use_container_width=True,
                        icon=":material/download:")
-    d2.download_button("Download summary, Option A and B (CSV)", summary_df.to_csv(index=False).encode("utf-8-sig"),
+    d2.download_button("Download summary, Option B (CSV)", summary_df.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"{stem}_summary.csv", mime="text/csv", use_container_width=True,
                        icon=":material/download:")
 
