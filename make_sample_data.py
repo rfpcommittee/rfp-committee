@@ -1,15 +1,18 @@
 """
 Builds DUMMY input files in sample_data/ so the app can be tried without real data.
 Every question is a multiple-choice question: the question and each option sit in their own column.
+One file per language, in three folders:
 
-  1_source_questions.csv        id, english_question, english_option_a..d, hindi_question, hindi_option_a..d
-  2_reference_translations.csv  id, then <language>_question, <language>_option_a..d for the 13 languages
-                                (placeholder text, NOT checked by native speakers)
-  3_vendor_output.csv           id, source_lang, target_lang, question, option_a..d
-                                (the reference with some words dropped/swapped and some options replaced;
-                                 NOT a real vendor's output)
+  sample_data/source/     source_english.csv, source_hindi.csv      id, question, option_a, option_b, option_c, option_d
+  sample_data/reference/  reference_<language>.csv (13 files)       same columns (placeholder text, NOT checked by native speakers)
+  sample_data/vendor/     vendor_<language>.csv                     id, source_lang, question, option_a, option_b, option_c, option_d
+                          (the reference with some words dropped/swapped and some options replaced;
+                           NOT a real vendor's output. Both source languages are in one file per target language.)
 
-Deliberate gaps, to exercise the app's edge cases: no output at all for Manipuri (Meitei), no Hindi-source output
+The same question has the same id (Q001 ...) in every file; an id is never used twice inside a file.
+The language of a reference or vendor file is read from its name (reference_tamil.csv, vendor_manipuri_meitei.csv).
+
+Deliberate gaps, to exercise the app's edge cases: no vendor file at all for Manipuri (Meitei), no Hindi-source output
 for Urdu, and one missing translation for Odia.
 
 Run:  python make_sample_data.py
@@ -188,36 +191,51 @@ def slug(lang):
     return ev._slug(lang)
 
 
-def write(name, header, rows):
-    with open(os.path.join(OUT, name), "w", newline="", encoding="utf-8-sig") as f:
+SUBDIRS = ("source", "reference", "vendor")
+
+
+def write(sub, name, header, rows):
+    with open(os.path.join(OUT, sub, name), "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         w.writerow(header)
         w.writerows(rows)
 
 
 def main():
-    os.makedirs(OUT, exist_ok=True)
+    for sub in SUBDIRS:                                   # start clean so no file of an older layout is left behind
+        os.makedirs(os.path.join(OUT, sub), exist_ok=True)
+        for name in os.listdir(os.path.join(OUT, sub)):
+            if name.lower().endswith(".csv"):
+                os.remove(os.path.join(OUT, sub, name))
+    for name in ("1_source_questions.csv", "2_reference_translations.csv", "3_vendor_output.csv"):
+        if os.path.exists(os.path.join(OUT, name)):       # the single-file layout used before
+            os.remove(os.path.join(OUT, name))
+
     n = len(IDS)
-    fields = ev.FIELDS
-    head = lambda prefix: [f"{prefix}_{f}" for f in fields]   # noqa: E731
-    write("1_source_questions.csv", ["id"] + head("english") + head("hindi"),
-          [[IDS[k]] + question("English", k) + question("Hindi", k) for k in range(n)])
-    ref_head = ["id"] + [c for lang in ev.LANGUAGES for c in head(slug(lang))]
-    write("2_reference_translations.csv", ref_head,
-          [[IDS[k]] + [x for lang in ev.LANGUAGES for x in question(lang, k)] for k in range(n)])
+    for lang in ev.SOURCES:
+        write("source", f"source_{lang.lower()}.csv", ["id"] + ev.FIELDS,
+              [[IDS[k]] + question(lang, k) for k in range(n)])
+    for lang in ev.LANGUAGES:
+        write("reference", f"reference_{slug(lang)}.csv", ["id"] + ev.FIELDS,
+              [[IDS[k]] + question(lang, k) for k in range(n)])
 
     rng = random.Random(7)
-    rows = []
+    files = rows_total = 0
     for lang in ev.LANGUAGES:
+        rows = []
         for s, p in zip(ev.SOURCES, NOISE[lang]):
             if p is None:
                 continue
             for k, qid in enumerate(IDS):
                 if qid in SKIP_ROWS.get((lang, s), set()):
                     continue
-                rows.append([qid, s, lang] + damage(question(lang, k), p, rng))
-    write("3_vendor_output.csv", ["id", "source_lang", "target_lang"] + fields, rows)
-    print(f"Wrote 3 files to {OUT}  ({n} questions, {len(rows)} vendor rows)")
+                rows.append([qid, s] + damage(question(lang, k), p, rng))
+        if rows:                                          # no rows at all = the vendor sent no file for this language
+            write("vendor", f"vendor_{slug(lang)}.csv", ["id", "source_lang"] + ev.FIELDS, rows)
+            files += 1
+            rows_total += len(rows)
+    print(f"Wrote {len(ev.SOURCES)} source, {len(ev.LANGUAGES)} reference and {files} vendor files to {OUT}  "
+          f"({n} questions, {rows_total} vendor rows)")
 
 
 if __name__ == "__main__":

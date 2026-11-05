@@ -1,7 +1,0 @@
-﻿id,english_question,english_option_a,english_option_b,english_option_c,english_option_d,hindi_question,hindi_option_a,hindi_option_b,hindi_option_c,hindi_option_d
-Q001,What is the capital of India?,Mumbai,New Delhi,Kolkata,Chennai,भारत की राजधानी क्या है?,मुंबई,नई दिल्ली,कोलकाता,चेन्नई
-Q002,Which of the following is a prime number?,4,6,7,9,निम्नलिखित में से कौन-सी अभाज्य संख्या है?,4,6,7,9
-Q003,The sum of two numbers is 20 and their difference is 4. Find the numbers.,6 and 14,8 and 12,9 and 11,10 and 10,दो संख्याओं का योग 20 है और उनका अंतर 4 है। संख्याएँ ज्ञात कीजिए।,6 और 14,8 और 12,9 और 11,10 और 10
-Q004,At what temperature does water boil at sea level?,50 °C,100 °C,150 °C,200 °C,समुद्र तल पर पानी किस तापमान पर उबलता है?,50 °C,100 °C,150 °C,200 °C
-Q005,What is the value of 12 × 5?,50,60,65,70,12 × 5 का मान क्या है?,50,60,65,70
-Q006,What is the chemical formula of water?,H2O,CO2,O2,NaCl,पानी का रासायनिक सूत्र क्या है?,H2O,CO2,O2,NaCl
