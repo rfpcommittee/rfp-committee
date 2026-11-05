@@ -1,6 +1,6 @@
 # RFP Translation Quality Evaluator
 
-A web app that scores one vendor's translations for the RFP translation-quality criteria (BLEU, COMET, chrF++) and turns the scores into marks. You load three CSV files, press a button, and read the results on the same page.
+A web app that scores one vendor's translations for the RFP translation-quality criteria (BLEU, COMET, chrF++) and turns the scores into marks. You load the CSV files (one file per language), press a button, and read the results on the same page.
 
 ## Install and run (start here)
 
@@ -59,11 +59,11 @@ Your browser opens at **http://localhost:8501**. If it does not, open that addre
 
 **5. Check that it works**
 
-In the app, switch on **Use the dummy sample files**, then press **Evaluate**. You should see the total marks (BLEU under Option B). With COMET on, the total is out of 27 and the first run takes about 3 minutes on a laptop CPU (about 1.5 minutes to load the model, then the scoring); with COMET off it is out of 17 and takes a few seconds.
+In the app, type any vendor name, switch on **Use the dummy sample files**, then press **Evaluate**. The sample files are in the **`sample_data`** folder of the project (next to `app.py`), in the sub-folders `source`, `reference` and `vendor` (see [Input files](#input-files)); you can also download them from the app with **Download the sample files (ZIP)**, to use as a template for your own files. You should see the total marks (BLEU under Option B). With COMET on, the total is out of 27 and the first run takes about 3 minutes on a laptop CPU (about 1.5 minutes to load the model, then the scoring); with COMET off it is out of 17 and takes a few seconds.
 
 **6. Use your own files**
 
-Switch the sample toggle off, upload your three CSV files (formats are described in [Input files](#input-files)), and press **Evaluate**.
+Switch the sample toggle off, upload your files (2 source files, 13 reference files, the vendor's files; formats and file names are described in [Input files](#input-files)), and press **Evaluate**.
 
 ### Without the .bat files (manual, also for macOS and Linux)
 
@@ -104,13 +104,14 @@ Restart the app after changing `.env`. If there is no `.env`, the app runs with 
 
 ## How to use the app
 
-1. **Step 1, Input files:** type the **vendor name** (required; it appears in the results and in the exported CSV files and file names), then upload the three files. Each file is checked straight away and shows what it found, for example "6 questions, 13 of 13 languages", or an error that says what to fix.
-2. **Step 2, Evaluate:** press the button. A progress bar shows the stage.
+1. **Step 1, Input files:** type the **vendor name** (required; it appears in the results and in the exported CSV files and file names), then upload the **English source file**, the **Hindi source file**, the **13 reference files** (select them all at once in the file dialog) and the **vendor's files**. A table "Files found" shows, for each language, which reference file and which vendor file was recognised. Every file is checked straight away and the errors name the file. Once the files are read, a **validation summary** compares them: question count, expected vendor rows (questions × 13 languages × 2 directions), rows received and missing, and a table of what the vendor delivered per language and direction. Errors (for example a question id that is missing in a reference file, a blank reference, a vendor id that is not in the source, two files for one language) block the **Evaluate** button; warnings (missing vendor output, unsupported language rows) do not.
+2. **Step 2, Evaluate:** press the button. A progress bar shows the stage. If you change the vendor name or any file afterwards, the earlier result is cleared so it can never be shown against different inputs.
 3. **Step 3, Results:**
    - total marks (BLEU Option B, COMET, chrF++);
    - one table with, for each metric, the `En→T` score, the `Hi→T` score, the `Max` (the higher of the two) and the marks;
    - a chart of the BLEU marks by language;
-   - two CSV downloads (per language, and the summary), both carrying the vendor name and an "Evaluation details" section with the library versions, sacreBLEU signatures and warnings.
+   - three downloads: per-language CSV, summary CSV, and an audit record (JSON). The CSVs carry the vendor name, a run ID, the time and the scoring policy; the audit record also has the SHA-256 of each input file, the validation summary, the library versions and the sacreBLEU signatures;
+   - an "Evaluation details" section with the same information and the warnings.
 
 ## What it scores
 
@@ -124,25 +125,52 @@ For each of the 13 target languages the app scores English → T and Hindi → T
 
 ## Input files
 
-Three CSV files, UTF-8 (in Excel: Save As, "CSV UTF-8"). Every question is a multiple-choice question: the **question and each of the four options sit in their own columns**. The `id` is the question number and must match across the files.
+All files are CSV, UTF-8 (in Excel: Save As, "CSV UTF-8"). There is **one file per language**, in three groups. Every question is a multiple-choice question: the **question and each of the four options sit in their own columns**.
 
-| File | Columns |
-|---|---|
-| 1. Source questions | `id`, `english_question`, `english_option_a`, `english_option_b`, `english_option_c`, `english_option_d`, `hindi_question`, `hindi_option_a`, `hindi_option_b`, `hindi_option_c`, `hindi_option_d` |
-| 2. Reference translations | `id`, then for each of the 13 languages `<language>_question`, `<language>_option_a`, `<language>_option_b`, `<language>_option_c`, `<language>_option_d` (for example `tamil_question`, `tamil_option_a`, ...) |
-| 3. Vendor output | `id`, `source_lang`, `target_lang`, `question`, `option_a`, `option_b`, `option_c`, `option_d` |
+| Group | File names | Columns |
+|---|---|---|
+| Source questions (2 files) | `source_english.csv`, `source_hindi.csv` | `id`, `question`, `option_a`, `option_b`, `option_c`, `option_d` |
+| Reference translations (13 files) | `reference_<language>.csv` | `id`, `question`, `option_a`, `option_b`, `option_c`, `option_d` |
+| Vendor output (one file per language) | `vendor_<language>.csv` | `id`, `source_lang`, `question`, `option_a`, `option_b`, `option_c`, `option_d` |
 
-- Language prefixes for file 2: `assamese, bengali, gujarati, kannada, konkani, malayalam, manipuri_meitei, marathi, odia, punjabi, tamil, telugu, urdu` (13 languages). In file 3, `target_lang` is the language name (`Tamil`, `Manipuri (Meitei)` or `manipuri_meitei`; any case).
-- Vendor output has one row per question, per language, per direction. `source_lang` is `English` or `Hindi`.
-- Example, source file, one row:
+In the app you upload the two source files in their two boxes, and the 13 reference files and the vendor files each in one box (select many files at once).
 
-  | id | english_question | english_option_a | english_option_b | english_option_c | english_option_d | hindi_question | ... |
-  |---|---|---|---|---|---|---|---|
-  | Q001 | What is the capital of India? | Mumbai | New Delhi | Kolkata | Chennai | भारत की राजधानी क्या है? | ... |
+### File names: the language comes from the name
 
-- The question and its four options are joined (one per line, without the A to D labels) and scored as **one text**, so the reference and the vendor output must be arranged the same way. Column names are matched ignoring upper and lower case.
-- A language or direction with no vendor output gets **0 marks** (the score columns show 0). A single missing translation is scored as an empty sentence.
-- Examples are in `sample_data/`. They are **dummy**: the reference text is placeholder text that was not checked by native speakers, and the "vendor output" is the reference with some words removed or replaced. Do not use them as results. Recreate them with `python make_sample_data.py` (close the files in Excel first).
+`<language>` is one of: `assamese`, `bengali`, `gujarati`, `kannada`, `konkani`, `malayalam`, `manipuri_meitei`, `marathi`, `odia`, `punjabi`, `tamil`, `telugu`, `urdu`. The app reads the language of a reference or vendor file **from its file name** (upper or lower case, `-` or `_` or a space all work; `manipuri` alone also works). So `reference_tamil.csv` is the Tamil reference and `vendor_tamil.csv` is the vendor's Tamil output. A name with no language, with two languages, two files for the same language, or a vendor file uploaded among the reference files, is reported as an error.
+
+### The id rules (so that ids never clash)
+
+The `id` is the question number (`Q001`, `Q002`, ... or `1`, `2`, ...; any text without surrounding spaces). Follow these rules in **every** file:
+
+1. **Inside one file, every id appears once.** No two questions share an id. `Q1` and `q1` count as the same id, so they clash too. (The only repeat allowed is in a vendor file, where the same id appears once for `English` and once for `Hindi` in `source_lang`.)
+2. **The same question has the same id in every file.** Question `Q001` is `Q001` in `source_english.csv`, in `source_hindi.csv`, in all 13 reference files and in all vendor files. Spell it the same way everywhere (upper/lower case counts).
+3. **The two source files have exactly the same ids.** If an id is only in one of them, the app stops and names it.
+4. **Each reference file has every source id, and no other id.** Missing or extra ids are errors and the file's language is named.
+5. **A vendor file may only use source ids.** An id that is not in the source is an error (it usually means the wrong vendor file). A source id that the vendor left out is not an error: it is counted as missing and scored as an empty translation.
+
+An id is never used for two different questions, and a question never has two ids. Do not renumber questions in only some of the files.
+
+### Other points
+
+- `source_lang` in a vendor file is `English` or `Hindi`. One vendor file holds both the English-to-language and the Hindi-to-language translations of that language. (An optional `target_lang` column is accepted; if present it must name the same language as the file.)
+- Column names are matched ignoring upper and lower case, spaces and underscores (`Option A` works for `option_a`).
+- The question and its four options are joined (one per line, without the A to D labels) and scored as **one text**, so the reference and the vendor output must be arranged the same way.
+- A language with no vendor file, or only blank rows, gets **0 marks** (the score columns show 0). A single missing translation is scored as an empty sentence.
+- Each of the 13 reference files is required; a missing reference file is an error.
+
+### Where the sample files are
+
+The dummy example is in the **`sample_data`** folder of the project, next to `app.py`:
+
+```
+sample_data/
+  source/      source_english.csv, source_hindi.csv
+  reference/   reference_assamese.csv ... reference_urdu.csv        (13 files)
+  vendor/      vendor_assamese.csv ... vendor_urdu.csv              (12 files: Manipuri (Meitei) was left out on purpose)
+```
+
+The same files can be downloaded from the app (**Download the sample files**, a ZIP with the same three folders). They are **dummy**: the reference text is placeholder text that was not checked by native speakers, and the "vendor output" is the reference with some words removed or replaced. Do not use them as results. Recreate them with `python make_sample_data.py` (close the files in Excel first).
 
 ## Marking rules
 
@@ -161,19 +189,29 @@ The rules live in one place, `rfp_final_table.py`. The app and the command-line 
 `rfp_final_table.py` also works on its own. It merges three result files (`sarvam_bleu_results.csv`, `sarvam_comet_results.csv`, `sarvam_chrf_results.csv`, each with a `Target` column and a `Max(...)` column) into one table:
 
 ```
-python rfp_final_table.py --bleu_option B --bidder "Vendor" --out final_table.csv
+python rfp_final_table.py --bidder "Vendor" --out final_table.csv
 ```
 
-Unlike the app, it adds up the marks of the languages instead of averaging them, and it uses one BLEU rule per run (`--bleu_option B` is the one the app uses; `A` and `best` are older options kept for comparison). Use the app for the official marks.
+Like the app, it uses BLEU Option B and averages each metric's marks over the languages (the last row), so its total is out of 27. It only merges existing result files and does no scoring or input checking: use the app for the official marks.
+
+## Tests
+
+```
+.venv\Scripts\python -m pytest -q
+```
+
+The suite covers file validation, the marking slabs, the scoring engine (with a mocked COMET model), the Streamlit screens and the Windows scripts. One extra test uses the real COMET model; it is skipped unless you set `RUN_COMET_TEST=1` (it loads about 2 GB and takes a few minutes on a CPU).
 
 ## Files
 
 | File | Purpose |
 |---|---|
 | `app.py` | The Streamlit web app |
-| `evaluator.py` | Reads and checks the three files, computes the scores, applies the marks |
+| `evaluator.py` | Reads and checks the input files, computes the scores, applies the marks |
 | `rfp_final_table.py` | The marking rules, and the command-line merge script |
-| `make_sample_data.py` | Builds the dummy files in `sample_data/` |
+| `make_sample_data.py` | Builds the dummy files in `sample_data/` (folders `source`, `reference`, `vendor`) |
+| `sample_data/` | The dummy example files |
+| `tests/` | Automated tests (`python -m pytest`) |
 | `.env` / `.env.example` | Settings (`.env` is not committed) |
 | `requirements.txt` | Pinned dependencies |
 | `setup_model_env.bat`, `run_app.bat` | Windows helpers to install and start |
@@ -183,4 +221,6 @@ Unlike the app, it adds up the marks of the languages instead of averaging them,
 - One vendor per run.
 - The reference translations and the test set must be supplied by the committee; none are included.
 - Human evaluation (15 marks) and the 25 out of 42 qualifying cutoff are not calculated.
-- The app does not save results by itself; use the CSV download buttons.
+- The app does not save results by itself; use the download buttons.
+- The BLEU rule below 30 (0 marks) is the Commission's decision. The published clarification (Run1 3.4) still shows the older text (7, 6 and 5 marks there), so keep the Commission's written order with the project records.
+- Option A and the Run1 3.3 fallback are not part of the app.

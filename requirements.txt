@@ -1,3 +1,5 @@
+# Versions below are the ones this project was tested with (Python 3.12). Install with setup_model_env.bat.
+#
 # streamlit is pinned to 1.46.1 because unbabel-comet needs protobuf<5, which newer streamlit versions do not allow.
 # Use Python 3.10-3.12 (unbabel-comet does not install on 3.13/3.14); setup_model_env.bat builds that environment.
 streamlit==1.46.1
@@ -5,7 +7,9 @@ streamlit==1.46.1
 setuptools<81
 # unbabel-comet needs numpy<2, and pyarrow 21+ is built for numpy 2 (pyarrow does not declare this, so pip cannot see it).
 pyarrow<21
-pandas
+pandas==2.3.3
 sacrebleu==2.6.0
-sentencepiece
-unbabel-comet
+sentencepiece==0.2.2
+unbabel-comet==2.2.7
+# tests only (python -m pytest)
+pytest==9.2.0
