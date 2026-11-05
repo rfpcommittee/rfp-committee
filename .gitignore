@@ -223,3 +223,7 @@ __marimo__/
 # Generated output of rfp_final_table.py
 rfp_final_table.csv
 
+
+# Automated tests are kept on the local machine only
+tests/
+.pytest_cache/

@@ -1,0 +1,3 @@
+[client]
+# hides the "Deploy" button of the Streamlit toolbar (this app runs locally)
+toolbarMode = "minimal"

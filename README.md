@@ -196,11 +196,7 @@ Like the app, it uses BLEU Option B and averages each metric's marks over the la
 
 ## Tests
 
-```
-.venv\Scripts\python -m pytest -q
-```
-
-The suite covers file validation, the marking slabs, the scoring engine (with a mocked COMET model), the Streamlit screens and the Windows scripts. One extra test uses the real COMET model; it is skipped unless you set `RUN_COMET_TEST=1` (it loads about 2 GB and takes a few minutes on a CPU).
+The automated tests (validation, marking slabs, scoring engine with a mocked COMET model, the screens and the Windows scripts) are kept on the maintainer's computer and are not part of this repository.
 
 ## Files
 
@@ -211,7 +207,6 @@ The suite covers file validation, the marking slabs, the scoring engine (with a 
 | `rfp_final_table.py` | The marking rules, and the command-line merge script |
 | `make_sample_data.py` | Builds the dummy files in `sample_data/` (folders `source`, `reference`, `vendor`) |
 | `sample_data/` | The dummy example files |
-| `tests/` | Automated tests (`python -m pytest`) |
 | `.env` / `.env.example` | Settings (`.env` is not committed) |
 | `requirements.txt` | Pinned dependencies |
 | `setup_model_env.bat`, `run_app.bat` | Windows helpers to install and start |
