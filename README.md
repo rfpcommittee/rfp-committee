@@ -1,6 +1,6 @@
 # RFP Translation Quality Evaluator
 
-A web app that scores one vendor's translations for the RFP translation-quality criteria (BLEU, COMET, chrF++) and turns the scores into marks. You load the CSV files (one file per language), press a button, and read the results on the same page.
+A web app that scores one vendor's translations for the RFP translation-quality criteria (BLEU, COMET, chrF++) and turns the scores into marks. You load the CSV files (one file per language, and per language pair for the vendor), press a button, and read the results on the same page.
 
 ## Install and run (start here)
 
@@ -63,7 +63,7 @@ In the app, type any vendor name, switch on **Use the dummy sample files**, then
 
 **6. Use your own files**
 
-Switch the sample toggle off, upload your files (2 source files, 13 reference files, the vendor's files; formats and file names are described in [Input files](#input-files)), and press **Evaluate**.
+Switch the sample toggle off, upload your files (2 source files, 13 reference files, up to 26 vendor files; formats and file names are described in [Input files](#input-files)), and press **Evaluate**.
 
 ### Without the .bat files (manual, also for macOS and Linux)
 
@@ -104,14 +104,16 @@ Restart the app after changing `.env`. If there is no `.env`, the app runs with 
 
 ## How to use the app
 
-1. **Step 1, Input files:** type the **vendor name** (required; it appears in the results and in the exported CSV files and file names), then upload the **English source file**, the **Hindi source file**, the **13 reference files** (select them all at once in the file dialog) and the **vendor's files**. A table "Files found" shows, for each language, which reference file and which vendor file was recognised. Every file is checked straight away and the errors name the file. Once the files are read, a **validation summary** compares them: question count, expected vendor rows (questions × 13 languages × 2 directions), rows received and missing, and a table of what the vendor delivered per language and direction. Errors (for example a question id that is missing in a reference file, a blank reference, a vendor id that is not in the source, two files for one language) block the **Evaluate** button; warnings (missing vendor output, unsupported language rows) do not.
+1. **Step 1, Input files:** type the **vendor name** (required; it appears in the results and in the exported CSV files and file names), then upload the **English source file**, the **Hindi source file**, the **13 reference files** (select them all at once in the file dialog) and the **vendor's files** (up to 26, one per language pair). A table "Files found" shows, for each language, which reference file and which English-to-language and Hindi-to-language vendor file was recognised. Every file is checked straight away and the errors name the file. Once the files are read, a **validation summary** compares them: question count, expected vendor rows (questions × 13 languages × 2 directions), rows received and missing, and a table of what the vendor delivered per language and direction. Errors (for example a question id that is missing in a reference file, a blank reference, a vendor id that is not in the source, two files for one language or language pair, a vendor file name that does not show its language pair) block the **Evaluate** button; warnings (missing vendor output) do not.
 2. **Step 2, Evaluate:** press the button. A progress bar shows the stage. If you change the vendor name or any file afterwards, the earlier result is cleared so it can never be shown against different inputs.
 3. **Step 3, Results:**
    - total marks (BLEU Option B, COMET, chrF++);
    - one table with, for each metric, the `En→T` score, the `Hi→T` score, the `Max` (the higher of the two) and the marks;
    - a chart of the BLEU marks by language;
-   - three downloads: per-language CSV, summary CSV, and an audit record (JSON). The CSVs carry the vendor name, a run ID, the time and the scoring policy; the audit record also has the SHA-256 of each input file, the validation summary, the library versions and the sacreBLEU signatures;
+   - three downloads: per-language CSV, summary CSV, and an audit record (JSON). The CSVs carry the vendor name, a run ID, the time and the scoring policy; the audit record also has the SHA-256 of each input file, the validation summary, the library versions, the sacreBLEU signatures, the COMET batch size and GPU setting, the missing-translation rule and any blank-reference cells you accepted;
    - an "Evaluation details" section with the same information and the warnings.
+
+Warnings, the "Files found" table, the vendor coverage table and the BLEU chart are in collapsible sections (accordions) so the page stays short; errors and the blank-cell decision are always visible.
 
 ## What it scores
 
@@ -131,19 +133,19 @@ All files are CSV, UTF-8 (in Excel: Save As, "CSV UTF-8"). There is **one file p
 |---|---|---|
 | Source questions (2 files) | `source_english.csv`, `source_hindi.csv` | `id`, `question`, `option_a`, `option_b`, `option_c`, `option_d` |
 | Reference translations (13 files) | `reference_<language>.csv` | `id`, `question`, `option_a`, `option_b`, `option_c`, `option_d` |
-| Vendor output (one file per language) | `vendor_<language>.csv` | `id`, `source_lang`, `question`, `option_a`, `option_b`, `option_c`, `option_d` |
+| Vendor output (up to 26 files, one per language pair) | `vendor_<source>_<language>.csv` | `id`, `question`, `option_a`, `option_b`, `option_c`, `option_d` |
 
-In the app you upload the two source files in their two boxes, and the 13 reference files and the vendor files each in one box (select many files at once).
+In the app you upload the two source files in their two boxes, and the 13 reference files and the vendor files each in one box (select many files at once, for example all 26 vendor files).
 
 ### File names: the language comes from the name
 
-`<language>` is one of: `assamese`, `bengali`, `gujarati`, `kannada`, `konkani`, `malayalam`, `manipuri_meitei`, `marathi`, `odia`, `punjabi`, `tamil`, `telugu`, `urdu`. The app reads the language of a reference or vendor file **from its file name** (upper or lower case, `-` or `_` or a space all work; `manipuri` alone also works). So `reference_tamil.csv` is the Tamil reference and `vendor_tamil.csv` is the vendor's Tamil output. A name with no language, with two languages, two files for the same language, or a vendor file uploaded among the reference files, is reported as an error.
+`<language>` is one of: `assamese`, `bengali`, `gujarati`, `kannada`, `konkani`, `malayalam`, `manipuri_meitei`, `marathi`, `odia`, `punjabi`, `tamil`, `telugu`, `urdu`. The app reads the language of a reference file, and the **source and target language of a vendor file, from the file name** (upper or lower case, `-` or `_` or a space all work; `manipuri` alone also works). So `reference_tamil.csv` is the Tamil reference, `vendor_english_tamil.csv` is the vendor's English-to-Tamil output and `vendor_hindi_tamil.csv` is the Hindi-to-Tamil output. The source (`english` or `hindi`) comes first, then the target language. A vendor name must show exactly one source and one language. A name with no language, with two languages, two files for the same language (or the same pair), or a vendor file uploaded among the reference files (or the other way round), is reported as an error.
 
 ### The id rules (so that ids never clash)
 
 The `id` is the question number (`Q001`, `Q002`, ... or `1`, `2`, ...; any text without surrounding spaces). Follow these rules in **every** file:
 
-1. **Inside one file, every id appears once.** No two questions share an id. `Q1` and `q1` count as the same id, so they clash too. (The only repeat allowed is in a vendor file, where the same id appears once for `English` and once for `Hindi` in `source_lang`.)
+1. **Inside one file, every id appears once.** No two questions share an id. `Q1` and `q1` count as the same id, so they clash too. (The same id does appear in `vendor_english_tamil.csv` and in `vendor_hindi_tamil.csv`, but that is two different files.)
 2. **The same question has the same id in every file.** Question `Q001` is `Q001` in `source_english.csv`, in `source_hindi.csv`, in all 13 reference files and in all vendor files. Spell it the same way everywhere (upper/lower case counts).
 3. **The two source files have exactly the same ids.** If an id is only in one of them, the app stops and names it.
 4. **Each reference file has every source id, and no other id.** Missing or extra ids are errors and the file's language is named.
@@ -153,10 +155,13 @@ An id is never used for two different questions, and a question never has two id
 
 ### Other points
 
-- `source_lang` in a vendor file is `English` or `Hindi`. One vendor file holds both the English-to-language and the Hindi-to-language translations of that language. (An optional `target_lang` column is accepted; if present it must name the same language as the file.)
+- One vendor file is one language pair: `vendor_english_tamil.csv` holds the English-to-Tamil translations, `vendor_hindi_tamil.csv` the Hindi-to-Tamil ones. (Optional `source_lang` and `target_lang` columns are accepted; if present they must agree with the file name.)
 - Column names are matched ignoring upper and lower case, spaces and underscores (`Option A` works for `option_a`).
 - The question and its four options are joined (one per line, without the A to D labels) and scored as **one text**, so the reference and the vendor output must be arranged the same way.
-- A language with no vendor file, or only blank rows, gets **0 marks** (the score columns show 0). A single missing translation is scored as an empty sentence.
+- A language with no vendor file in either direction, or only blank rows, gets **0 marks** (the score columns show 0). If only one direction has a file, the other direction is just not available and the available one is the Max.
+- **A single missing translation** (a vendor row with the question and all options blank, or a question the vendor left out) is scored as an empty sentence for BLEU and chrF++, and as **0 for COMET** (it is not sent to the COMET model; the 0 counts in that language's average). A translation that lacks only one option is not "missing": it is scored as it is.
+- **A vendor row with an empty id is an error** that names the file and the row. A vendor file whose name does not show one source (`english` or `hindi`) and one language is an error too. Nothing is skipped silently.
+- **Blank cells in a reference file:** if a reference question or option is blank (but not the whole question), the app shows an error and asks you to either fix the file or tick **Continue anyway**. Nothing is set to 0 marks because of this: the reference of that question is made from the cells that are filled, so the vendor's full text is compared with a shorter reference and its scores can go down. If you continue, the blank cells are written in the audit record. A question that is blank in every cell of a reference file is always an error.
 - Each of the 13 reference files is required; a missing reference file is an error.
 
 ### Where the sample files are
@@ -167,7 +172,7 @@ The dummy example is in the **`sample_data`** folder of the project, next to `ap
 sample_data/
   source/      source_english.csv, source_hindi.csv
   reference/   reference_assamese.csv ... reference_urdu.csv        (13 files)
-  vendor/      vendor_assamese.csv ... vendor_urdu.csv              (12 files: Manipuri (Meitei) was left out on purpose)
+  vendor/      vendor_english_assamese.csv ... vendor_hindi_urdu.csv (23 of the 26 files: both Manipuri (Meitei) files and Hindi-to-Urdu were left out on purpose)
 ```
 
 The same files can be downloaded from the app (**Download the sample files**, a ZIP with the same three folders). They are **dummy**: the reference text is placeholder text that was not checked by native speakers, and the "vendor output" is the reference with some words removed or replaced. Do not use them as results. Recreate them with `python make_sample_data.py` (close the files in Excel first).
@@ -217,5 +222,5 @@ The automated tests (validation, marking slabs, scoring engine with a mocked COM
 - The reference translations and the test set must be supplied by the committee; none are included.
 - Human evaluation (15 marks) and the 25 out of 42 qualifying cutoff are not calculated.
 - The app does not save results by itself; use the download buttons.
-- The BLEU rule below 30 (0 marks) is the Commission's decision. The published clarification (Run1 3.4) still shows the older text (7, 6 and 5 marks there), so keep the Commission's written order with the project records.
-- Option A and the Run1 3.3 fallback are not part of the app.
+- The BLEU rule below 30 (0 marks) is the Commission's decision. Annexure-1 (`ai_evaluation/AI_RFP_Run1.docx`, 3.3) in this repository now says so; make sure the version issued to bidders has the same wording, and keep the Commission's written order with the project records.
+- Option A and the old fallback to Option B are not part of the app, and they are no longer in Annexure-1.

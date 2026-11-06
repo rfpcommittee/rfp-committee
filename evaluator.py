@@ -4,9 +4,10 @@ Evaluation engine for the RFP translation-quality marks (BLEU, COMET, chrF++).
 One vendor is evaluated at a time. The input is a set of CSV files, one per language:
   source/      source_english.csv, source_hindi.csv          id, question, option_a, option_b, option_c, option_d
   reference/   reference_<language>.csv  (13 files)          id, question, option_a, option_b, option_c, option_d
-  vendor/      vendor_<language>.csv     (13 files)          id, source_lang, question, option_a, option_b, option_c, option_d
-The language of a reference or vendor file comes from its file name. The `id` of a question must be unique inside a
-file and identical for the same question in every file.
+  vendor/      vendor_<source>_<language>.csv (26 files)   id, question, option_a, option_b, option_c, option_d
+               (vendor_english_tamil.csv = English to Tamil, vendor_hindi_tamil.csv = Hindi to Tamil)
+The language of a reference file, and the source and target language of a vendor file, come from the file name. The
+`id` of a question must be unique inside a file and identical for the same question in every file.
 Every question is a multiple-choice question; its question and four options are joined (one per line) and scored
 as one text.
 
@@ -188,6 +189,13 @@ def language_from_filename(name):
     return found
 
 
+def source_from_filename(name):
+    """Source languages named in a file name: vendor_english_tamil.csv -> {'English'}. Whole words only ('eng' is also
+    inside 'bengali'). An empty set means none was recognised, more than one means the name is ambiguous."""
+    rest = _key(os.path.splitext(os.path.basename(str(name)))[0])
+    return {src for src in SOURCES if src.lower() in rest}
+
+
 def read_source_file(file, label):
     """One source file (English or Hindi). Returns a frame with id and text (question and options joined)."""
     df = _need(_read_csv(file, label), ["id"] + FIELDS, label)
@@ -200,49 +208,38 @@ def read_source_file(file, label):
 
 def read_ref_file(file, label):
     """One reference file (one language). Returns a frame with id and text.
-    attrs['partial'] lists ids whose question or some option is blank (a warning; fully blank rows are an error later)."""
+    attrs['partial'] lists the questions with a blank cell, e.g. 'Q4 (option_c)'. The user must confirm these (see
+    Inputs.confirm); a question that is blank in every cell is an error in validate()."""
     df = _need(_read_csv(file, label), ["id"] + FIELDS, label)
     _check_ids(df, label)
     out = pd.DataFrame({"id": df["id"], "text": _clean(df, FIELDS)})
-    out.attrs["partial"] = df.loc[(df[FIELDS] == "").any(axis=1) & (out["text"] != ""), "id"].tolist()
+    part = df[(df[FIELDS] == "").any(axis=1) & (out["text"] != "")]
+    out.attrs["partial"] = [f"{r['id']} ({', '.join(f for f in FIELDS if r[f] == '')})" for _, r in part.iterrows()]
     return out
 
 
-def read_vendor_file(file, lang, label):
-    """One vendor file (the output for one target language, both source languages in it).
-    Returns the usable rows (id, source_lang, target_lang, translation = joined MCQ text).
-    attrs['ignored_rows'] / attrs['ignored_examples'] describe rows that were skipped."""
+def read_vendor_file(file, source, lang, label):
+    """One vendor file = the output for one language pair (source -> lang), both known from the file name.
+    Returns the rows (id, source_lang, target_lang, translation = joined MCQ text). A row with an empty id is an
+    error (never skipped silently). The optional columns source_lang / target_lang must agree with the file name."""
     df = _read_csv(file, label)
     by_key = {_key(c): c for c in df.columns}
-    target_col = by_key.get("targetlang")                    # optional: if present it must agree with the file name
-    df = _need(df, ["id", "source_lang"] + FIELDS, label)
-    keep = ["id", "source_lang"] + FIELDS
-    if target_col is not None:
-        df["target_lang"] = df[target_col]
-        keep.append("target_lang")
-    df = df[keep].copy()
-    if target_col is not None:
-        said = df["target_lang"].map(lambda s: None if s == "" else _LANG_MAP.get(_key(s), s))
-        wrong = df.loc[said.notna() & (said != lang), "target_lang"].unique().tolist()
+    optional = {"source_lang": by_key.get("sourcelang"), "target_lang": by_key.get("targetlang")}
+    df = _need(df, ["id"] + FIELDS, label)
+    for column, expected, names in (("source_lang", source, _SRC_MAP), ("target_lang", lang, _LANG_MAP)):
+        original = optional[column]
+        if original is None:
+            continue
+        said = df[original].map(lambda v: None if v == "" else names.get(_key(v), v))
+        wrong = df.loc[said.notna() & (said != expected), original].unique().tolist()
         if wrong:
-            raise InputError(f"{label}: this file is for {lang} but the target_lang column says {wrong[:3]}. "
-                             f"Put each language in its own file.")
-    df["translation"] = _clean(df, FIELDS)
-    df["target_lang"] = lang
-    src = df["source_lang"].map(lambda s: _SRC_MAP.get(_key(s)))
-    bad = src.isna() | (df["id"] == "")
-    examples = sorted({s for s in df.loc[bad, "source_lang"]})[:5]
-    df["source_lang"] = src
-    df = df.loc[~bad, ["id", "source_lang", "target_lang", "translation"]]
-    if df.empty:
-        raise InputError(f"{label}: no usable rows. source_lang must be English or Hindi.")
-    for s, g in df.groupby("source_lang"):
-        problem = _id_problem(g["id"])
-        if problem:
-            raise InputError(f"{label} ({s} source): {problem}")
-    df.attrs["ignored_rows"] = int(bad.sum())
-    df.attrs["ignored_examples"] = examples
-    return df
+            raise InputError(f"{label}: this file is {source} to {lang} but the {column} column says {wrong[:3]}. "
+                             f"Put each language pair in its own file.")
+    empty = df.index[df["id"] == ""]
+    if len(empty):
+        raise InputError(f"{label}: empty id in row(s) {[int(i) + 2 for i in empty[:5]]}.")
+    _check_ids(df, label)
+    return pd.DataFrame({"id": df["id"], "source_lang": source, "target_lang": lang, "translation": _clean(df, FIELDS)})
 
 
 def combine_source(english, hindi):
@@ -277,37 +274,70 @@ class Inputs:
     vendor: pd.DataFrame = None                      # id, source_lang, target_lang, translation
     errors: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
+    confirm: list = field(default_factory=list)      # problems that block Evaluate until the user accepts them
     hashes: dict = field(default_factory=dict)       # "group/file name" -> SHA-256
     ref_files: dict = field(default_factory=dict)    # language -> file name
-    vendor_files: dict = field(default_factory=dict)
+    vendor_files: dict = field(default_factory=dict)  # (source language, target language) -> file name
 
     def as_tuple(self):
         return self.source, self.refs, self.vendor
 
 
-def _per_language(group, items, wrong_word, inp, reader):
-    """Reads the files of one group (reference or vendor): the language comes from the file name."""
-    names = inp.ref_files if group == "reference" else inp.vendor_files
+def _wrong_place(name, word, group):
+    return (f"{name}: this looks like a {word} file but it was added under the {group} files. "
+            f"Check that the files are in the right place.")
+
+
+def _read_references(items, inp):
+    """The reference files: one per language, the language comes from the file name."""
     frames = []
     for name, file in items:
-        inp.hashes[f"{group}/{name}"] = file_sha256(file)
-        if wrong_word in _key(name):
-            inp.errors.append(f"{name}: this looks like a {wrong_word} file but it was added under the "
-                              f"{group} files. Check that the files are in the right place.")
+        inp.hashes[f"reference/{name}"] = file_sha256(file)
+        if "vendor" in _key(name):
+            inp.errors.append(_wrong_place(name, "vendor", "reference"))
             continue
         langs = language_from_filename(name)
         if len(langs) != 1:
             why = ("it names more than one language: " + ", ".join(sorted(langs))) if langs else "no language found in it"
             inp.errors.append(f"{name}: cannot tell which language this file is for ({why}). "
-                              f"Name it like {group}_tamil.csv (names: {', '.join(_slug(x) for x in LANGUAGES)}).")
+                              f"Name it like reference_tamil.csv (names: {', '.join(_slug(x) for x in LANGUAGES)}).")
             continue
         lang = next(iter(langs))
-        if lang in names:
-            inp.errors.append(f"{lang} has two {group} files ({names[lang]} and {name}). Keep one.")
+        if lang in inp.ref_files:
+            inp.errors.append(f"{lang} has two reference files ({inp.ref_files[lang]} and {name}). Keep one.")
             continue
-        names[lang] = name
+        inp.ref_files[lang] = name
         try:
-            frames.append((lang, reader(file, lang, f"{group.capitalize()} file {name} ({lang})")))
+            frames.append((lang, read_ref_file(file, f"Reference file {name} ({lang})")))
+        except InputError as e:
+            inp.errors.append(str(e))
+    return frames
+
+
+def _read_vendor(items, inp):
+    """The vendor files: one per language pair, both languages come from the file name."""
+    frames = []
+    for name, file in items:
+        inp.hashes[f"vendor/{name}"] = file_sha256(file)
+        if "reference" in _key(name):
+            inp.errors.append(_wrong_place(name, "reference", "vendor"))
+            continue
+        langs, sources = language_from_filename(name), source_from_filename(name)
+        if len(langs) != 1 or len(sources) != 1:
+            found = sorted(langs) + sorted(sources)
+            why = (f"it names {', '.join(found)}; one source language and one target language are needed"
+                   if found else "no language found in it")
+            inp.errors.append(f"{name}: cannot tell which language pair this file is for ({why}). Name it like "
+                              f"vendor_english_tamil.csv or vendor_hindi_tamil.csv (source first, then the target "
+                              f"language: {', '.join(_slug(x) for x in LANGUAGES)}).")
+            continue
+        pair = (next(iter(sources)), next(iter(langs)))
+        if pair in inp.vendor_files:
+            inp.errors.append(f"{pair[0]} to {pair[1]} has two vendor files ({inp.vendor_files[pair]} and {name}). Keep one.")
+            continue
+        inp.vendor_files[pair] = name
+        try:
+            frames.append(read_vendor_file(file, pair[0], pair[1], f"Vendor file {name} ({pair[0]} to {pair[1]})"))
         except InputError as e:
             inp.errors.append(str(e))
     return frames
@@ -315,7 +345,8 @@ def _per_language(group, items, wrong_word, inp, reader):
 
 def load_inputs(source_english=None, source_hindi=None, references=(), vendor=()):
     """Reads and checks every file on its own. The arguments are (file name, file) pairs, where the file is a path
-    or an uploaded file object; references and vendor are lists of such pairs (one file per language).
+    or an uploaded file object; references (one file per language) and vendor (one file per language pair) are lists
+    of such pairs.
     Cross-file checks (ids against the source, languages, coverage) are done by validate()."""
     inp = Inputs()
     tables = {}
@@ -340,19 +371,15 @@ def load_inputs(source_english=None, source_hindi=None, references=(), vendor=()
         except InputError as e:
             inp.errors.append(str(e))
 
-    for lang, df in _per_language("reference", references, "vendor", inp,
-                                  lambda f, lang, label: read_ref_file(f, label)):
+    for lang, df in _read_references(references, inp):
         inp.refs[lang] = df
         if df.attrs.get("partial"):
-            inp.warnings.append(f"Reference {lang}: the question or an option is blank for "
-                                f"{len(df.attrs['partial'])} question(s), e.g. {', '.join(df.attrs['partial'][:3])}.")
+            inp.confirm.append(f"Reference {lang}: {len(df.attrs['partial'])} question(s) have a blank question or "
+                               f"option, e.g. {', '.join(df.attrs['partial'][:3])}.")
 
-    frames = [df for _, df in _per_language("vendor", vendor, "reference", inp,
-                                             lambda f, lang, label: read_vendor_file(f, lang, label))]
+    frames = _read_vendor(vendor, inp)
     if frames:
         inp.vendor = pd.concat(frames, ignore_index=True)
-        inp.vendor.attrs["ignored_rows"] = sum(f.attrs.get("ignored_rows", 0) for f in frames)
-        inp.vendor.attrs["ignored_examples"] = sorted({x for f in frames for x in f.attrs.get("ignored_examples", [])})[:5]
     return inp
 
 
@@ -399,7 +426,7 @@ def validate(source, refs, vendor):
     """Cross-checks the parsed files (see load_inputs; the per-file checks are made there).
 
     Blocking errors: reference languages or question ids missing, extra ids, blank references, vendor ids that are not
-    in the source. Warnings only: unsupported vendor rows, missing vendor output (it is scored, see evaluate)."""
+    in the source. Warnings only: missing vendor output (it is scored, see evaluate)."""
     errors, warnings = [], []
     ids = list(source["id"])
     id_set, n = set(ids), len(ids)
@@ -428,16 +455,11 @@ def validate(source, refs, vendor):
 
     stray = vendor[~vendor["id"].isin(id_set)]
     if not stray.empty:
-        where = ", ".join(sorted(stray["target_lang"].unique()))
+        where = ", ".join(sorted({f"{a} to {b}" for a, b in zip(stray["source_lang"], stray["target_lang"])}))
         vextra = sorted(set(stray["id"]))
         errors.append(f"Vendor output: {len(vextra)} id(s) are not in the source questions "
                       f"(e.g. {', '.join(vextra[:5])}; in the {where} file(s)). Check that this is the right vendor."
                       + _id_hint(sorted(id_set - set(vendor["id"])), vextra))
-    if vendor.attrs.get("ignored_rows"):
-        ex = vendor.attrs.get("ignored_examples") or []
-        warnings.append(f"Vendor output: {vendor.attrs['ignored_rows']} row(s) have a source_lang that is not "
-                        f"English or Hindi (or an empty id) and are not used"
-                        + (f", e.g. {', '.join(repr(x) for x in ex)}." if ex else "."))
 
     v = vendor[vendor["id"].isin(id_set)]
     rows, received = [], 0
@@ -462,8 +484,7 @@ def validate(source, refs, vendor):
                                 f"They are scored as empty.")
     expected = n * len(LANGUAGES) * len(SOURCES)
     info = {"questions": n, "languages": len(LANGUAGES), "directions": len(SOURCES),
-            "expected_rows": expected, "received_rows": received, "missing_rows": expected - received,
-            "unsupported_rows": int(vendor.attrs.get("ignored_rows", 0))}
+            "expected_rows": expected, "received_rows": received, "missing_rows": expected - received}
     return Validation(errors, warnings, info, pd.DataFrame(rows))
 
 
@@ -545,8 +566,9 @@ def evaluate(source, refs, vendor, with_comet=False, comet_model=None, progress=
         data, spans = [], {}
         for key, (srcs, mts, rfs) in groups.items():
             a = len(data)
-            data += [{"src": a_, "mt": b_, "ref": c_} for a_, b_, c_ in zip(srcs, mts, rfs)]
-            spans[key] = (a, len(data))
+            keep = [j for j, m in enumerate(mts) if m != ""]        # a missing translation is not sent to the model
+            data += [{"src": srcs[j], "mt": mts[j], "ref": rfs[j]} for j in keep]
+            spans[key] = (a, len(data), len(mts))
         if data:
             tick(0.6, f"COMET model scoring {len(data)} sentence pairs (this is the slow step)")
             out = comet_model.predict(data, batch_size=int(setting("COMET_BATCH_SIZE", "16")),
@@ -555,8 +577,8 @@ def evaluate(source, refs, vendor, with_comet=False, comet_model=None, progress=
             if len(seg) != len(data):
                 raise ScoringError(f"COMET returned {len(seg)} scores for {len(data)} sentence pairs.")
             seg = [_finite(x, "COMET") for x in seg]
-            for key, (a, b) in spans.items():
-                scores[key]["comet"] = sum(seg[a:b]) / (b - a)
+            for key, (a, b, total) in spans.items():
+                scores[key]["comet"] = sum(seg[a:b]) / total         # missing translations count as 0 in the mean
         else:
             warnings.append("COMET: there was no vendor output to score.")
         comet_info = (f"{setting('COMET_CHECKPOINT') or setting('COMET_MODEL', 'Unbabel/wmt22-comet-da')} "
@@ -620,6 +642,12 @@ def evaluate(source, refs, vendor, with_comet=False, comet_model=None, progress=
         "bleu_signature": _signature(bleu_m),
         "chrf_signature": _signature(chrf_m),
         "comet": comet_info,
+        "comet_batch_size": int(setting("COMET_BATCH_SIZE", "16")) if with_comet else None,
+        "comet_gpus": int(setting("COMET_GPUS", "0")) if with_comet else None,
+        "bleu_config": "sacreBLEU BLEU(tokenize=flores200), corpus level",
+        "chrf_config": "sacreBLEU CHRF(word_order=2), corpus level",
+        "missing_translation_rule": "BLEU and chrF++: scored as an empty sentence; COMET: segment score 0 (not sent to the model)",
+        "accepted_issues": list(run_info.get("accepted") or []),
         "python": platform.python_version(), "pandas": pd.__version__,
         "unbabel_comet": _version("unbabel-comet"),
     }

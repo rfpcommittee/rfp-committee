@@ -5,15 +5,16 @@ One file per language, in three folders:
 
   sample_data/source/     source_english.csv, source_hindi.csv      id, question, option_a, option_b, option_c, option_d
   sample_data/reference/  reference_<language>.csv (13 files)       same columns (placeholder text, NOT checked by native speakers)
-  sample_data/vendor/     vendor_<language>.csv                     id, source_lang, question, option_a, option_b, option_c, option_d
-                          (the reference with some words dropped/swapped and some options replaced;
-                           NOT a real vendor's output. Both source languages are in one file per target language.)
+  sample_data/vendor/     vendor_<source>_<language>.csv            id, question, option_a, option_b, option_c, option_d
+                          (26 files = 2 source languages x 13 target languages; the reference with some words
+                           dropped/swapped and some options replaced; NOT a real vendor's output.)
 
 The same question has the same id (Q001 ...) in every file; an id is never used twice inside a file.
-The language of a reference or vendor file is read from its name (reference_tamil.csv, vendor_manipuri_meitei.csv).
+The language of a reference file, and the source and target language of a vendor file, are read from the file
+name (reference_tamil.csv, vendor_english_tamil.csv, vendor_hindi_manipuri_meitei.csv).
 
-Deliberate gaps, to exercise the app's edge cases: no vendor file at all for Manipuri (Meitei), no Hindi-source output
-for Urdu, and one missing translation for Odia.
+Deliberate gaps, to exercise the app's edge cases: no vendor files at all for Manipuri (Meitei), no file for
+Hindi to Urdu, and one missing translation (a row left out) in English to Odia.
 
 Run:  python make_sample_data.py
 """
@@ -222,16 +223,15 @@ def main():
     rng = random.Random(7)
     files = rows_total = 0
     for lang in ev.LANGUAGES:
-        rows = []
-        for s, p in zip(ev.SOURCES, NOISE[lang]):
+        for s, p in zip(ev.SOURCES, NOISE[lang]):         # the random numbers are drawn in the same order as before
             if p is None:
-                continue
+                continue                                    # no output in this direction = no vendor file
+            rows = []
             for k, qid in enumerate(IDS):
                 if qid in SKIP_ROWS.get((lang, s), set()):
                     continue
-                rows.append([qid, s] + damage(question(lang, k), p, rng))
-        if rows:                                          # no rows at all = the vendor sent no file for this language
-            write("vendor", f"vendor_{slug(lang)}.csv", ["id", "source_lang"] + ev.FIELDS, rows)
+                rows.append([qid] + damage(question(lang, k), p, rng))
+            write("vendor", f"vendor_{s.lower()}_{slug(lang)}.csv", ["id"] + ev.FIELDS, rows)
             files += 1
             rows_total += len(rows)
     print(f"Wrote {len(ev.SOURCES)} source, {len(ev.LANGUAGES)} reference and {files} vendor files to {OUT}  "
