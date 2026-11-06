@@ -1,89 +1,90 @@
-# Review of `rfp_final_table.py`
+# Review of the marking code (`rfp_final_table.py` and the app)
 
-**Reviewed against:** [ai_evaluation/AI_RFP_Run1.docx](ai_evaluation/AI_RFP_Run1.docx), the clarification on translation-quality evaluation (BLEU, COMET, chrF++ and human evaluation).
-**Related documents in the same folder:** [Run2](ai_evaluation/AI_RFP_Run2_20marks.docx), [Run3](ai_evaluation/Ai_RFP_Run3_TBD.docx), [Run4](ai_evaluation/AI_RFP_Run4.docx), [Run5](ai_evaluation/AI_RFP_Run5.docx) and [Run6](ai_evaluation/AI_RFP_Run6.docx). They cover other criteria and are not implemented by this script.
+**Reviewed against:** [Annexure-1 / Run1](ai_evaluation/AI_RFP_Run1.docx), the clarification on translation-quality evaluation (BLEU, COMET, chrF++ and human evaluation), in its current version (Option B only, BLEU below 30 = 0 marks, rule 2.8 for missing translations), and the [Instructions to Bidders](ai_evaluation/Instructions%20to%20Bidders%20for%20the%20Proof%20of%20Concept%20%28POC%29.docx) (section 5, output files).
+**Related documents in the same folder:** [Run2](ai_evaluation/AI_RFP_Run2_20marks.docx), [Run3](ai_evaluation/Ai_RFP_Run3_TBD.docx), [Run4](ai_evaluation/AI_RFP_Run4.docx), [Run5](ai_evaluation/AI_RFP_Run5.docx) and [Run6](ai_evaluation/AI_RFP_Run6.docx). They cover other criteria and are not implemented here.
 
-> Notation: 📑 means "section of the referenced document". For example, 📑 2.7 is section 2.7 of `AI_RFP_Run1.docx`.
+> Notation: 📑 means "section of Annexure-1 (`AI_RFP_Run1.docx`)". For example, 📑 2.7 is section 2.7 of that document.
+
+This file replaces an earlier review that was written when the project was only the merge script. Since then the project became the Streamlit app, which scores the vendor's files itself. The earlier findings are listed in section 3 with their status.
 
 ---
 
-## 1. What the script is
+## 1. What the code is now
 
-`rfp_final_table.py` merges three per-language result files (BLEU, COMET, chrF++), converts each language's "Max" score into marks, totals them, and writes `rfp_final_table.csv`.
+| Part | Role |
+|---|---|
+| `evaluator.py` + `app.py` | **The official calculation.** Reads the CSV files (2 source, 13 reference, the vendor's files), checks them, computes BLEU, COMET and chrF++, applies the marks and exports the results and an audit record. |
+| `rfp_final_table.py` | **The marking rules** (`bleu_marks`, `comet_marks`, `chrf_marks`, `POLICY_ID`) used by the app, and a **command-line merge script** that builds a table from three existing result files. The script does no scoring and no input checking. |
 
-| Input CSV | Column used | Metric | Max marks |
-|---|---|---|---|
-| `sarvam_bleu_results.csv` | `Max(B1,B2)` | BLEU | 12 |
-| `sarvam_comet_results.csv` | `Max(C1,C2)` | COMET | 10 |
-| `sarvam_chrf_results.csv` | `Max(F1,F2)` | chrF++ | 5 |
+Only the automatic-metrics part of Annexure-1 is implemented (📑 3, 📑 4, 📑 5; maximum 27 marks, 17 without COMET). Human evaluation (📑 6, 15 marks) and the qualification rule (📑 7, 25 of 42) are not covered.
 
-It implements only the automatic-metrics part of Run1 (📑 3, 📑 4, 📑 5). Human evaluation (📑 6, 15 marks) and the qualification rule (📑 7) are not covered.
+## 2. What matches Annexure-1 (verified in the code and by tests)
 
-## 2. What matches Run1 (verified)
-
-| Item | Run1 reference | Script |
+| Item | Annexure-1 | Code |
 |---|---|---|
-| BLEU Option A slabs | 📑 3.2: 70 / 60 / 50 → 12 / 10 / 6 / 0 | `bleu_a` matches |
-| BLEU Option B rule | 📑 3.4: 12 minus 1 per 10 points or part thereof, minimum 0 | `bleu_b` matches (BLEU 65 → 11, BLEU 41.5 → 9) |
-| COMET slabs | 📑 4.4: 0.85 / 0.75 / 0.65 → 10 / 7 / 4 / 0 | `comet_marks` matches |
-| chrF++ slabs | 📑 5.2: 75 / 65 → 5 / 3 / 0 | `chrf_marks` matches |
-| Unrounded, half-open slabs | 📑 2.6 | Uses `>=` on raw scores, matches |
-| Max of the two directions | 📑 2.4 | Reads the `Max(...)` columns, matches |
-| Unsupported language gets 0 | 📑 2.7 | `NaN` score → 0 marks, matches |
+| BLEU definition | 📑 3.1: sacreBLEU 2.6.0, corpus level, `flores200` | `BLEU(tokenize="flores200").corpus_score` over the whole language |
+| BLEU marks (Option B) | 📑 3.3: ≥70 → 12; 60–<70 → 11; 50–<60 → 10; 40–<50 → 9; 30–<40 → 8; <30 → 0 | `bleu_marks`; checked at 29.99, 30, 39.99, 40, 69.99, 70 |
+| COMET model and marks | 📑 4.1, 4.4: `Unbabel/wmt22-comet-da` 2.2.7; ≥0.85 → 10, ≥0.75 → 7, ≥0.65 → 4, else 0 | `comet_marks`; the language score is the mean of the sentence scores |
+| COMET inputs | 📑 4.2: source question with options, the translation, the reference translation | `{"src", "mt", "ref"}` per question |
+| chrF++ | 📑 5.1, 5.2: `word_order=2`; ≥75 → 5, ≥65 → 3, else 0 | `CHRF(word_order=2)`, `chrf_marks` |
+| Unrounded, half-open slabs | 📑 2.6 | `>=` on raw scores; rounding only for display |
+| Two directions, higher one | 📑 2.3, 2.4 | English→T and Hindi→T per language; `Max` per metric; if one direction has no output, the other is used |
+| Mean over 13 languages, equal weight | 📑 2.7 | sum of the 13 language marks ÷ 13 |
+| No output for a language | 📑 2.7: 0 marks | 0 marks under every rule; the language stays in the average |
+| Missing translation | 📑 2.8 | BLEU, chrF++: empty sentence; COMET: segment score 0, not sent to the model, counted in the mean |
+| Output format | Instructions §5: 26 CSV files, one per language pair, `vendor_<source>_<language>.csv` (for example `vendor_english_tamil.csv`), header `id, question, option_a..d` | `read_vendor_file` and `load_inputs`; the source and the target language come from the file name |
 
-## 3. Gaps and issues
+The same `id` must be used for a question in every file; the rules are in the README ("Input files") and Instructions §5.
 
-### 3.1 Aggregation differs from Run1 (most important)
+## 3. Findings of the earlier review and their status
 
-- **Run1 📑 2.7:** the marks of the 13 languages are averaged (simple mean, equal weight, 2 decimals). This gives BLEU out of 12, COMET out of 10 and chrF++ out of 5.
-- **Script:** each language is scored out of 27 (12 + 10 + 5). The OVERALL row **sums** the marks across languages, for example 200 / 351, instead of averaging them.
-- **Impact:** the percentage printed at the end is equivalent, but the OVERALL marks are not the official per-metric marks. A reader cannot compare them directly to the 12 / 10 / 5 maximums.
-- **Fix:** in the OVERALL row, use the mean (rounded to 2 decimals) for each marks column, and set Max Marks to 27.
+| # | Earlier finding | Status |
+|---|---|---|
+| 3.1 | OVERALL row summed the marks instead of averaging them (📑 2.7) | **Fixed.** The app and the script both average over the languages; the script's `Max Marks` is the maximum of the metrics present. |
+| 3.2 | Option B fallback and the `best` mode | **Closed.** Option A, the fallback (old 📑 3.3) and `best` were removed from the code, and Annexure-1 now states Option B only. |
+| 3.3 | Languages missing from a result file; spelling differences | **Fixed in the app**: all 13 languages are required for the references, language names come from file names, and missing vendor languages are reported. **Still open in the script** (see 4.1). |
+| 3.4 | Human evaluation and the 25 / 42 qualification are missing | **Open by design.** Out of scope for this tool. |
+| 3.5 | Partial results look complete; bidder name not in the file; `sarvam_*` defaults; no range checks | **Fixed in the app** (vendor name required and written into every export; validation; the audit record). **Still open in the script** (see 4.1). |
 
-### 3.2 Option B fallback is not implemented as specified
+## 4. Remaining gaps and points to confirm
 
-- **Run1 📑 3.3:** Option A is the default for everyone. Option B is applied to all bidders and all languages only if every bidder's total BLEU marks under Option A is zero. If any bidder gets any BLEU marks under Option A, Option B is not used.
-- **Script:** it handles one bidder at a time. The user picks `--bleu_option A|B|best` by hand, so the cross-bidder condition is never checked.
-- **`best` mode:** it takes the higher of A and B per language. Run1 does not allow this. It could favour one bidder and conflicts with the statement that the choice "depends only on this condition and not on which bidder it favours".
-- **Fix:** either remove `best`, or add a multi-bidder mode that checks the 📑 3.3 condition across all bidders before choosing A or B.
+### 4.1 The command-line script is not an official calculation
 
-### 3.3 Inconsistent handling of languages missing from a CSV
+- It merges three existing result files with an outer merge on `Target`. A language absent from a file gets `NaN` and 0 marks, but the OVERALL line averages the score columns ignoring `NaN` while the marks columns count it as 0, so the two are computed on different sets of languages.
+- A different spelling of a language (for example "Manipuri" and "Manipuri (Meitei)") creates two partly empty rows without a warning.
+- A missing metric file only prints a `[note]` and the result still looks complete.
+- `--bidder` appears in the printed title only; the defaults are `sarvam_*`; scores are not range-checked.
+- **Advice:** use the app for the official marks (the README says so). If the script is kept, add a check for the 13 languages and a clear warning for partial results.
 
-- The script uses an outer merge on `Target`. A language that is absent from one CSV gets `NaN` for that metric and 0 marks, which is consistent with 📑 2.7.
-- However, the OVERALL average of the score columns ignores `NaN`, while the marks columns count it as 0. The averages and the marks are therefore computed on different sets of languages.
-- If one file spells a `Target` differently (for example "Manipuri" vs "Manipuri (Meitei)"), the merge creates two partly empty rows without any warning.
-- **Fix:** validate that all files contain the same 13 languages and fail or warn if not.
+### 4.2 Policy and document points
 
-### 3.4 Human evaluation and qualification are missing
+- **BLEU below 30 = 0** is the Commission's decision. The text in this repository's Annexure-1 (📑 3.3) now says so; make sure the version issued to bidders carries the same wording and keep the Commission's written order with the project records.
+- **COMET 0 for a missing translation** (📑 2.8) was decided for this tool; it is now written in Annexure-1. COMET gives an empty translation about 0.32 if it is sent to the model, so the rule changes marks only when many translations are missing.
+- **Batch size 16** and the library versions (sacreBLEU 2.6.0, unbabel-comet 2.2.7) are written in Annexure-1. If `COMET_BATCH_SIZE` or a library version changes, change the document too. The audit record stores the actual values of every run.
+- **Test data format:** the real Sample Test Data Set and the original test data must use the same layout as `sample_data/` (file names and columns), because the bidders are told to check their files with this tool.
 
-- The script's maximum is 27, while Run1 📑 7.1 sets the total at 42 (BLEU 12 + COMET 10 + chrF++ 5 + human evaluation 15).
-- The qualifying cutoff in 📑 7.2 is 25 out of 42. The script's final percentage cannot be compared with this cutoff, and it has no pass or fail output.
-- **Fix:** add an optional human-evaluation input (📑 6.6 slabs: 4.5 / 4.0 / 3.5 → 15 / 10 / 5 / 0, then the mean over 13 languages), and print a qualification line using the unrounded total against 25.
+### 4.3 Limits of the checks
 
-### 3.5 Smaller issues
+- The app cannot know that the text under an id really is the translation of that question; it can only check that the ids match in every file.
+- The language of the content of a file is not checked (only the English / Hindi source files get a script warning).
+- The real COMET model and the browser upload path were tested by hand once; the automated tests use a mocked COMET model, and the upload widget is not covered by them.
 
-- **Partial results look complete:** if a metric file is missing, the script prints only a `[note]` and still reports a percentage, which can look like a full result. A clearer warning, or an error unless `--allow_partial` is passed, would be safer.
-- **OVERALL row filter:** rows are dropped with `startswith("OVERALL")`. This is fine today, but it depends on the exact label used by the other three scripts.
-- **Bidder name:** `--bidder` appears only in the printed title and is not written to the CSV, so output files from different bidders cannot be told apart.
-- **Defaults:** file names default to `sarvam_*`, which ties the script to one bidder unless the paths are overridden.
-- **No input validation:** non-numeric or out-of-range scores (for example BLEU above 100, COMET above 1) are not checked.
+## 5. Relation to the rest of `ai_evaluation`
 
-## 4. Relation to the rest of `ai_evaluation`
+| Document | Annexure | Criterion | Marks | Covered by this code |
+|---|---|---|---|---|
+| [Run1](ai_evaluation/AI_RFP_Run1.docx) | 1 | BLEU, COMET, chrF++, human evaluation | 12 + 10 + 5 + 15 = 42 | Partly (27 of 42) |
+| [Run2](ai_evaluation/AI_RFP_Run2_20marks.docx) | 2 | Notation, tables, image text, RTL / multi-script | 20 | No |
+| [Run3](ai_evaluation/Ai_RFP_Run3_TBD.docx) | 3 | Batch throughput, concurrent processing | 8 | No |
+| [Run4](ai_evaluation/AI_RFP_Run4.docx) | 4 | API, CAT tool, glossary / translation memory (live demo) | 15 | No |
+| [Run5](ai_evaluation/AI_RFP_Run5.docx) | 5 | Confidence score, error categorization, dashboard | 10 | No |
+| [Run6](ai_evaluation/AI_RFP_Run6.docx) | 6 | Data handling, encryption (security) | 5 | No |
 
-| Document | Criterion | Marks | Covered by this script |
-|---|---|---|---|
-| [Run1](ai_evaluation/AI_RFP_Run1.docx) | BLEU, COMET, chrF++, human evaluation | 12 + 10 + 5 + 15 = 42 | Partly (27 of 42) |
-| [Run2](ai_evaluation/AI_RFP_Run2_20marks.docx) | Notation, tables, image text, RTL / multi-script | 20 | No |
-| [Run3](ai_evaluation/Ai_RFP_Run3_TBD.docx) | Batch throughput, concurrent processing | 8 | No |
-| [Run4](ai_evaluation/AI_RFP_Run4.docx) | API, CAT tool, glossary / translation memory (live demo) | 15 | No |
-| [Run5](ai_evaluation/AI_RFP_Run5.docx) | Confidence score, error categorization, dashboard | 10 | No |
-| [Run6](ai_evaluation/AI_RFP_Run6.docx) | Data handling, encryption (security) | 5 | No |
+Annexures 2 to 6 are committee handbooks with their own score sheets. They would need separate tooling if a combined scoreboard is wanted. Annexure-3 (4.2, "Output integrity") mentions a BLEU comparison between a concurrent and a sequential run; it is not computed by this tool.
 
-Run2 to Run6 are committee handbooks with their own scoring sheets. They would need separate tooling if a combined scoreboard is wanted.
+## 6. Suggested next steps
 
-## 5. Suggested priority
-
-1. Fix the aggregation to a per-language mean (3.1).
-2. Remove `best` mode and implement the Option B fallback condition across bidders (3.2).
-3. Add language-set validation and a partial-results warning (3.3, 3.5).
-4. Add human evaluation and the 25 / 42 qualification check (3.4).
+1. Confirm that the issued Annexure-1 and Instructions carry the same text as the repository versions (section 4.2).
+2. Keep real test data in the `sample_data/` layout.
+3. Decide whether the command-line script stays; if it does, add the language and partial-result checks (4.1).
+4. If wanted later: human evaluation input and the 25 / 42 qualification line.
