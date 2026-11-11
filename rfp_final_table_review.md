@@ -29,10 +29,12 @@ Only the automatic-metrics part of Annexure-1 is implemented (📑 3, 📑 4, �
 | chrF++ | 📑 5.1, 5.2: `word_order=2`; ≥75 → 5, ≥65 → 3, else 0 | `CHRF(word_order=2)`, `chrf_marks` |
 | Unrounded, half-open slabs | 📑 2.6 | `>=` on raw scores; rounding only for display |
 | Two directions, higher one | 📑 2.3, 2.4 | English→T and Hindi→T per language; `Max` per metric; if one direction has no output, the other is used |
-| Mean over 13 languages, equal weight | 📑 2.7 | sum of the 13 language marks ÷ 13 |
+| Mean over 13 languages, equal weight | 📑 2.7 | sum of the language marks ÷ 14: the 13 languages and Hindi (English to Hindi); Annexure-1 itself says 13, see the policy point below |
 | No output for a language | 📑 2.7: 0 marks | 0 marks under every rule; the language stays in the average |
 | Missing translation | 📑 2.8 | BLEU, chrF++: empty sentence; COMET: segment score 0, not sent to the model, counted in the mean |
-| Output format | Instructions §5: 26 CSV files, one per language pair, `vendor_<source>_<language>.csv` (for example `vendor_english_tamil.csv`), header `id, question, option_a..d` | `read_vendor_file` and `load_inputs`; the source and the target language come from the file name |
+| Output format | Instructions §5: 27 CSV files, one per language pair (26 plus `vendor_english_hindi.csv`), `vendor_<source>_<language>.csv` (for example `vendor_english_tamil.csv`), header `id, question, option_a..d` | `read_vendor_file` and `load_inputs`; the source and the target language come from the file name |
+| English to Hindi (extra test) | Instructions §3: "Additionally English to Hindi will also be tested" | `vendor_english_hindi.csv`; the reference is the Hindi source file (no 14th reference file); scored with the same BLEU, COMET, chrF++ and slabs, shown as the last row of the one results table (En→T columns only, Hi→T empty) and **included in the average, now over 14 rows** (SSC's instruction) |
+| Disqualification | Instructions §3: no output or unsupported language = 0 marks and the bidder is disqualified | a language (or English to Hindi) with no output in any direction sets `disqualified`; the results page shows a banner, an `Outcome` column and a last row, and the summary CSV has `Disqualified` columns; marks are still calculated |
 
 The same `id` must be used for a question in every file; the rules are in the README ("Input files") and Instructions §5.
 
@@ -58,6 +60,7 @@ The same `id` must be used for a question in every file; the rules are in the RE
 
 ### 4.2 Policy and document points
 
+- **Disqualification and English to Hindi:** Instructions §3 says a language with no output means 0 marks and disqualification; Annexure-1 (📑 2.7) only says 0 marks. Add the disqualification to Annexure-1 or keep it only in the Instructions. The app also treats a missing English-to-Hindi output as disqualifying (a literal reading of §3); confirm this. Annexure-1 (📑 2.3, 2.7) speaks of 13 languages only and does not mention English to Hindi, and the average is now over 14 rows (13 languages and Hindi); the Commission should confirm that this is intended and amend the 13 to 14.
 - **BLEU below 30 = 0** is the Commission's decision. The text in this repository's Annexure-1 (📑 3.3) now says so; make sure the version issued to bidders carries the same wording and keep the Commission's written order with the project records.
 - **COMET 0 for a missing translation** (📑 2.8) was decided for this tool; it is now written in Annexure-1. COMET gives an empty translation about 0.32 if it is sent to the model, so the rule changes marks only when many translations are missing.
 - **Batch size 16** and the library versions (sacreBLEU 2.6.0, unbabel-comet 2.2.7) are written in Annexure-1. If `COMET_BATCH_SIZE` or a library version changes, change the document too. The audit record stores the actual values of every run.

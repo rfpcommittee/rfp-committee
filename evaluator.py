@@ -4,8 +4,9 @@ Evaluation engine for the RFP translation-quality marks (BLEU, COMET, chrF++).
 One vendor is evaluated at a time. The input is a set of CSV files, one per language:
   source/      source_english.csv, source_hindi.csv          id, question, option_a, option_b, option_c, option_d
   reference/   reference_<language>.csv  (13 files)          id, question, option_a, option_b, option_c, option_d
-  vendor/      vendor_<source>_<language>.csv (26 files)   id, question, option_a, option_b, option_c, option_d
-               (vendor_english_tamil.csv = English to Tamil, vendor_hindi_tamil.csv = Hindi to Tamil)
+  vendor/      vendor_<source>_<language>.csv (27 files)   id, question, option_a, option_b, option_c, option_d
+               (vendor_english_tamil.csv = English to Tamil, vendor_hindi_tamil.csv = Hindi to Tamil, and one extra
+               file vendor_english_hindi.csv = English to Hindi, whose reference is the Hindi source file)
 The language of a reference file, and the source and target language of a vendor file, come from the file name. The
 `id` of a question must be unique inside a file and identical for the same question in every file.
 Every question is a multiple-choice question; its question and four options are joined (one per line) and scored
@@ -23,7 +24,9 @@ import math
 import os
 import platform
 import re
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -35,6 +38,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LANGUAGES = ["Assamese", "Bengali", "Gujarati", "Kannada", "Konkani", "Malayalam", "Manipuri (Meitei)",
              "Marathi", "Odia", "Punjabi", "Tamil", "Telugu", "Urdu"]
 SOURCES = ("English", "Hindi")
+HINDI = "Hindi"                      # extra target: English to Hindi, reference = the Hindi source file; reported, not averaged
+PAIRS = [(s, lang) for lang in LANGUAGES for s in SOURCES] + [("English", HINDI)]
 SHORT = {"English": "En", "Hindi": "Hi"}
 FIELDS = ["question", "option_a", "option_b", "option_c", "option_d"]
 _COL = re.compile(r"^(.+)_(" + "|".join(FIELDS) + r")$")
@@ -323,13 +328,16 @@ def _read_vendor(items, inp):
             inp.errors.append(_wrong_place(name, "reference", "vendor"))
             continue
         langs, sources = language_from_filename(name), source_from_filename(name)
+        if not langs and sources == set(SOURCES):                 # vendor_english_hindi.csv: the extra English to Hindi pair
+            langs, sources = {HINDI}, {"English"}
         if len(langs) != 1 or len(sources) != 1:
             found = sorted(langs) + sorted(sources)
             why = (f"it names {', '.join(found)}; one source language and one target language are needed"
                    if found else "no language found in it")
             inp.errors.append(f"{name}: cannot tell which language pair this file is for ({why}). Name it like "
                               f"vendor_english_tamil.csv or vendor_hindi_tamil.csv (source first, then the target "
-                              f"language: {', '.join(_slug(x) for x in LANGUAGES)}).")
+                              f"language: {', '.join(_slug(x) for x in LANGUAGES)}; English to Hindi is "
+                              f"vendor_english_hindi.csv).")
             continue
         pair = (next(iter(sources)), next(iter(langs)))
         if pair in inp.vendor_files:
@@ -409,6 +417,21 @@ def load_comet_model():
         raise ModelUnavailable(f"Could not load the COMET model: {e}") from e
 
 
+_comet_lock = threading.Lock()
+_comet_future = None
+
+
+def start_comet_loading():
+    """Starts loading the COMET model in a background thread and returns a Future for it. The model is loaded once and
+    kept for later runs; a failed load is tried again on the next call. Lets BLEU and chrF++ run while the model loads."""
+    global _comet_future
+    with _comet_lock:
+        f = _comet_future
+        if f is None or (f.done() and f.exception() is not None):
+            _comet_future = f = ThreadPoolExecutor(max_workers=1, thread_name_prefix="comet-load").submit(load_comet_model)
+        return f
+
+
 # ---------------------------------------------------------------- validation across the files
 @dataclass
 class Validation:
@@ -463,29 +486,37 @@ def validate(source, refs, vendor):
 
     v = vendor[vendor["id"].isin(id_set)]
     rows, received = [], 0
-    for lang in LANGUAGES:
-        row = {"Language": lang}
+    for lang in LANGUAGES + [HINDI]:
+        srcs = SOURCES if lang != HINDI else ("English",)          # English to Hindi has one direction only
+        row = {"Language": lang if lang != HINDI else "Hindi (English to Hindi only)"}
         for src in SOURCES:
+            if src not in srcs:
+                row[f"{src} received"] = None
+                continue
             g = v[(v["target_lang"] == lang) & (v["source_lang"] == src)]
             got = int((g["translation"] != "").sum())
             received += got
             row[f"{src} received"] = got
         row["Expected per direction"] = n
         rows.append(row)
-        got_both = [row[f"{src} received"] for src in SOURCES]
-        if not any(got_both):
-            warnings.append(f"{lang}: no vendor output at all (no vendor file, or only blank rows). It will get 0 marks.")
+        got_all = [row[f"{src} received"] for src in srcs]
+        if not any(got_all):
+            warnings.append(f"{lang}: no vendor output at all (no vendor file, or only blank rows). It will get 0 marks "
+                            f"and the bidder is disqualified.")
             continue
-        for src, got in zip(SOURCES, got_both):
+        for src, got in zip(srcs, got_all):
             if got == 0:
                 warnings.append(f"{lang}: no output for {src} to {lang}. The other direction is used.")
             elif got < n:
                 warnings.append(f"{lang} ({src} to {lang}): {n - got} of {n} translation(s) missing or blank. "
                                 f"They are scored as empty.")
-    expected = n * len(LANGUAGES) * len(SOURCES)
-    info = {"questions": n, "languages": len(LANGUAGES), "directions": len(SOURCES),
+    expected = n * len(PAIRS)
+    info = {"questions": n, "languages": len(LANGUAGES), "directions": len(SOURCES), "pairs": len(PAIRS),
             "expected_rows": expected, "received_rows": received, "missing_rows": expected - received}
-    return Validation(errors, warnings, info, pd.DataFrame(rows))
+    cov = pd.DataFrame(rows)
+    for c in [f"{s} received" for s in SOURCES]:
+        cov[c] = cov[c].astype("Int64")
+    return Validation(errors, warnings, info, cov)
 
 
 # ---------------------------------------------------------------- scoring
@@ -538,6 +569,7 @@ def evaluate(source, refs, vendor, with_comet=False, comet_model=None, progress=
     src_text = {"English": dict(zip(source["id"], source["english"])),
                 "Hindi": dict(zip(source["id"], source["hindi"]))}
     ref_text = {lang: dict(zip(refs[lang]["id"], refs[lang]["text"])) for lang in LANGUAGES}
+    ref_text[HINDI] = src_text["Hindi"]                  # the reference of English to Hindi is the Hindi source file
     vendor_text = {}
     for (s, t), g in vendor.groupby(["source_lang", "target_lang"]):
         vendor_text[(s, t)] = dict(zip(g["id"], g["translation"]))
@@ -547,9 +579,13 @@ def evaluate(source, refs, vendor, with_comet=False, comet_model=None, progress=
 
     scores = {}   # (language, source) -> {"bleu", "chrf", "comet"}
     groups = {}   # (language, source) -> (src list, mt list, ref list)
-    pairs = [(lang, s) for lang in LANGUAGES for s in SOURCES]
+    pairs = [(lang, s) for s, lang in PAIRS]
     for n, (lang, s) in enumerate(pairs):
-        tick(0.05 + 0.5 * n / len(pairs), f"BLEU and chrF++: {s} to {lang}")
+        loading = hasattr(comet_model, "result") and not comet_model.done()
+        if hasattr(comet_model, "result") and comet_model.done() and comet_model.exception() is not None:
+            raise comet_model.exception()                  # the model could not be loaded: stop now, not after BLEU
+        tick(0.05 + 0.5 * n / len(pairs),
+             f"BLEU and chrF++: {s} to {lang}" + ("  (the COMET model is loading in the background)" if loading else ""))
         vt = vendor_text.get((s, lang))
         if vt is None or not any(vt.values()):
             continue                                    # no output in this direction
@@ -563,6 +599,10 @@ def evaluate(source, refs, vendor, with_comet=False, comet_model=None, progress=
     if with_comet:
         if comet_model is None:
             raise ModelUnavailable("COMET was requested but no model was loaded.")
+        if hasattr(comet_model, "result"):                  # a Future from start_comet_loading()
+            if not comet_model.done():
+                tick(0.58, "BLEU and chrF++ done. Waiting for the COMET model to finish loading...")
+            comet_model = comet_model.result()
         data, spans = [], {}
         for key, (srcs, mts, rfs) in groups.items():
             a = len(data)
@@ -587,16 +627,17 @@ def evaluate(source, refs, vendor, with_comet=False, comet_model=None, progress=
     tick(0.9, "Applying marks")
     nan = float("nan")
     rows = []
-    for lang in LANGUAGES:
+    for lang in LANGUAGES + [HINDI]:
+        srcs = SOURCES if lang != HINDI else ("English",)
         row = {"Language": lang}
-        got = [s for s in SOURCES if (lang, s) in scores]
-        row["Status"] = NO_OUTPUT if not got else "OK" if len(got) == len(SOURCES) else f"Only {got[0]} source"
+        got = [s for s in srcs if (lang, s) in scores]
+        row["Status"] = NO_OUTPUT if not got else "OK" if len(got) == len(srcs) else f"Only {got[0]} source"
 
         metrics = [("BLEU", "bleu"), ("chrF++", "chrf")] + ([("COMET", "comet")] if with_comet else [])
         maxima = {}
         for name, k in metrics:
             vals = []
-            for s in SOURCES:
+            for s in srcs:
                 v = scores.get((lang, s), {}).get(k, nan)
                 row[f"{name} {SHORT[s]}→T"] = v
                 vals.append(v)
@@ -611,14 +652,17 @@ def evaluate(source, refs, vendor, with_comet=False, comet_model=None, progress=
         row["chrF++ Marks"] = rft.chrf_marks(maxima["chrF++"]) if scored else 0
         rows.append(row)
 
-    table = pd.DataFrame(rows)
+    full = pd.DataFrame(rows)
     order = ["Language", "Status"]
     for name in ["BLEU"] + (["COMET"] if with_comet else []) + ["chrF++"]:
         order += [f"{name} En→T", f"{name} Hi→T", f"Max {name}"]
     order += ["BLEU Marks"] + (["COMET Marks"] if with_comet else []) + ["chrF++ Marks"]
-    table = table[order]
+    full = full[order]
+    full["Outcome"] = ["DISQUALIFIED" if st == NO_OUTPUT else "" for st in full["Status"]]
+    table = full                                       # the 13 languages and, as the last row, Hindi (English to Hindi only)
+    disqualified = [r["Language"] for _, r in full.iterrows() if r["Status"] == NO_OUTPUT]
 
-    n = len(LANGUAGES)
+    n = len(table)                                     # the marks are averaged over these 14 rows
 
     def mean(col):
         return float(table[col].sum()) / n
@@ -628,7 +672,8 @@ def evaluate(source, refs, vendor, with_comet=False, comet_model=None, progress=
     max_total = rft.BLEU_MAX + rft.CHRF_MAX + (rft.COMET_MAX if with_comet else 0)
     total = bleu + chrf + (comet or 0)
     summary = {"bleu": bleu, "comet": comet, "chrf": chrf, "total": total, "max_total": max_total,
-               "pct": 100 * total / max_total, "with_comet": with_comet, "languages": n}
+               "pct": 100 * total / max_total, "with_comet": with_comet, "languages": n,
+               "disqualified": bool(disqualified), "disqualified_languages": disqualified}
     run_info = run_info or {}
     meta = {
         "run_id": str(uuid.uuid4()),
@@ -671,7 +716,9 @@ def export_tables(res, who):
              "Scoring policy": m["scoring_policy"]}
     summary = pd.DataFrame([{**ident, "BLEU option": "B", "BLEU marks": s["bleu"], "COMET marks": s["comet"],
                              "chrF++ marks": s["chrf"], "Total": s["total"], "Max": s["max_total"],
-                             "Percent": s["pct"]}]).round(2)
+                             "Percent": s["pct"],
+                             "Disqualified": "Yes" if s["disqualified"] else "No",
+                             "Disqualified for no output in": ", ".join(s["disqualified_languages"])}]).round(2)
     detail = res.table.copy()
     for i, (k, v) in enumerate(ident.items()):
         detail.insert(i, k, v)

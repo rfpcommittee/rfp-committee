@@ -234,6 +234,12 @@ def main():
             write("vendor", f"vendor_{s.lower()}_{slug(lang)}.csv", ["id"] + ev.FIELDS, rows)
             files += 1
             rows_total += len(rows)
+    rows = []                                              # the extra pair: English to Hindi (reference = the Hindi source)
+    for k, qid in enumerate(IDS):
+        rows.append([qid] + damage(question("Hindi", k), 0.10, random.Random(11 + k)))
+    write("vendor", "vendor_english_hindi.csv", ["id"] + ev.FIELDS, rows)
+    files += 1
+    rows_total += len(rows)
     print(f"Wrote {len(ev.SOURCES)} source, {len(ev.LANGUAGES)} reference and {files} vendor files to {OUT}  "
           f"({n} questions, {rows_total} vendor rows)")
 

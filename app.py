@@ -8,11 +8,9 @@ The scoring engine is evaluator.py; the marking rules are in rfp_final_table.py.
 Run:  streamlit run app.py     (or double-click run_app.bat)
 """
 import hashlib
-import io
 import json
 import os
 import re
-import zipfile
 
 import pandas as pd
 import streamlit as st
@@ -22,7 +20,7 @@ import rfp_final_table as rft
 
 SAMPLE_DIR = os.path.join(ev.BASE_DIR, "sample_data")
 TOTAL_LANGS = len(ev.LANGUAGES)
-TOTAL_PAIRS = TOTAL_LANGS * len(ev.SOURCES)
+TOTAL_PAIRS = len(ev.PAIRS)
 
 st.set_page_config(page_title="RFP Translation Evaluator", page_icon=":material/analytics:", layout="wide")
 
@@ -96,6 +94,7 @@ st.markdown(
       .pg-msg {font-size: .85rem; opacity: .75; margin-top: .6rem;}
       div[data-testid="stMetric"] {background: rgba(128,128,128,.08); border-radius: 12px; padding: .8rem 1rem;
                                     border: 1px solid rgba(128,128,128,.15);}
+      .st-key-total_box_dq div[data-testid="stMetric"] {border: 2px solid #da3633; background: rgba(218,54,51,.10);}
       div[data-testid="stFileUploader"] section {border-radius: 12px; border: 1.5px dashed rgba(75,139,214,.6);}
     </style>
     """,
@@ -119,11 +118,6 @@ def step(n, svg, text):
 
 def chips(*items):
     return "".join(f'<span class="chip">{a} <b>→ {m}</b></span>' for a, m in items)
-
-
-@st.cache_resource(show_spinner="Loading the COMET model (the first time it is downloaded, which can take a while)...")
-def get_comet():
-    return ev.load_comet_model()
 
 
 MODEL_ON = ev.use_model()
@@ -198,36 +192,17 @@ if not bidder.strip():
     st.caption("Enter the vendor name first. Evaluate stays disabled until you do.")
 
 SAMPLE_SUBDIRS = ("source", "reference", "vendor")
-HAS_SAMPLE = all(os.path.isdir(os.path.join(SAMPLE_DIR, d)) for d in SAMPLE_SUBDIRS)
+# The dummy sample files stay in the project (sample_data folder) for bidders to read from GitHub. The "use the sample files" switch
+# is only for the developers' tests and is hidden in the normal app (set RFP_SAMPLE_MODE=1 to show it).
+HAS_SAMPLE = (os.environ.get("RFP_SAMPLE_MODE") == "1"
+              and all(os.path.isdir(os.path.join(SAMPLE_DIR, d)) for d in SAMPLE_SUBDIRS))
 
-use_sample = st.toggle(
-    "Use the dummy sample files (to try the app; not real data)",
-    value=False,
-    disabled=not HAS_SAMPLE,
-    help="Created by make_sample_data.py in the sample_data folder (sub-folders source, reference and vendor).",
-)
+use_sample = st.toggle("Use the sample files (developer mode)", value=False) if HAS_SAMPLE else False
 
 
 def sample_list(sub):
     folder = os.path.join(SAMPLE_DIR, sub)
     return [(f, os.path.join(folder, f)) for f in sorted(os.listdir(folder)) if f.lower().endswith(".csv")]
-
-
-def sample_zip():
-    """The dummy sample CSV files as one ZIP (folders source, reference, vendor), as a template for the layout."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for sub in SAMPLE_SUBDIRS:
-            for name, path in sample_list(sub):
-                z.write(path, arcname=f"sample_data/{sub}/{name}")
-    return buf.getvalue()
-
-
-if HAS_SAMPLE:
-    st.download_button("Download the sample files (ZIP, folders source / reference / vendor)", sample_zip(),
-                       file_name="sample_data.zip", mime="application/zip", icon=":material/download:",
-                       help="The same dummy files, also saved in the sample_data folder of the project. "
-                            "Use them as a template for the layout and the file names. They are not real data.")
 
 
 def card_header(icon_name, title, pill, sub):
@@ -236,7 +211,42 @@ def card_header(icon_name, title, pill, sub):
 
 
 def named(files):
-    return [(f.name, f) for f in files or []]
+    """(name, file) pairs. A file selected twice (same name, same content) is kept once, so choosing the same files again
+    does not cause a 'two files' error; the same name with different content is kept and reported as an error."""
+    out, seen, repeated = [], set(), []
+    for f in files or []:
+        key = (f.name, hashlib.sha256(f.getvalue()).hexdigest())
+        if key in seen:
+            repeated.append(f.name)
+            continue
+        seen.add(key)
+        out.append((f.name, f))
+    if repeated:
+        st.caption(f"{len(repeated)} file(s) were selected more than once; the repeated copies are ignored.")
+    return out
+
+
+def selection_note(chosen, expected, what, never_ok=()):
+    """One line under an upload box: how many of the expected files are chosen, and which ones are still pending.
+    never_ok = pending items that, if still pending, mean a disqualification (shown in red)."""
+    pending = [e for e in expected if e not in chosen]
+    done = len(expected) - len(pending)
+    if not pending:
+        html = f'<span style="color:#22c55e;font-weight:700">{done} of {len(expected)} {what} selected. Nothing pending.</span>'
+    else:
+        html = (f'<span style="color:#d29922;font-weight:700">{done} of {len(expected)} {what} selected, {len(pending)} pending:</span> '
+                + ", ".join(pending))
+        if never_ok:
+            html += ('<br><span style="color:#e53935;font-weight:700">No file in either direction (the bidder is disqualified '
+                     'if these stay without output):</span> ' + ", ".join(never_ok))
+    st.markdown(f'<div style="font-size:.9rem;margin:.2rem 0 .4rem">{html}</div>', unsafe_allow_html=True)
+
+
+def vendor_pair_of(name):
+    langs, srcs = ev.language_from_filename(name), ev.source_from_filename(name)
+    if not langs and srcs == set(ev.SOURCES):
+        return ("English", ev.HINDI)
+    return (next(iter(srcs)), next(iter(langs))) if len(langs) == 1 and len(srcs) == 1 else None
 
 
 source_en = source_hi = None
@@ -266,6 +276,7 @@ with st.container(border=True):
                 st.error(f"Two {lang} source files were selected ({', '.join(i[0] for i in items)}). Keep only one.")
         source_en = by_lang["English"][0] if len(by_lang["English"]) == 1 else None
         source_hi = by_lang["Hindi"][0] if len(by_lang["Hindi"]) == 1 else None
+    selection_note([l for l, f in (("English", source_en), ("Hindi", source_hi)) if f], ["English", "Hindi"], "source files")
     st.caption("Columns: id, question, option_a, option_b, option_c, option_d")
 
 with st.container(border=True):
@@ -277,17 +288,25 @@ with st.container(border=True):
     else:
         refs_in = named(st.file_uploader("Reference files (select all 13 at once)", type="csv", key="refs",
                                          accept_multiple_files=True))
+    got_refs = {next(iter(ev.language_from_filename(n))) for n, _ in refs_in if len(ev.language_from_filename(n)) == 1}
+    selection_note(got_refs, ev.LANGUAGES, "reference files")
     st.caption("Columns: id, question, option_a, option_b, option_c, option_d. The language is read from the file name.")
 
 with st.container(border=True):
     card_header("users", "Vendor output", pill,
-                f"One vendor at a time. One file per language pair: {TOTAL_PAIRS} files (vendor_english_tamil.csv, vendor_hindi_tamil.csv, ...)")
+                f"One vendor at a time. One file per language pair: {TOTAL_PAIRS} files (vendor_english_tamil.csv, vendor_hindi_tamil.csv, ..., "
+                f"and vendor_english_hindi.csv)")
     if use_sample:
         vendor_in = sample_list("vendor")
         st.markdown(f"**{len(vendor_in)} files** from sample_data/vendor")
     else:
-        vendor_in = named(st.file_uploader("Vendor files (select all 26 at once, or all the files the vendor sent)", type="csv",
+        vendor_in = named(st.file_uploader(f"Vendor files (select all {TOTAL_PAIRS} at once, or all the files the vendor sent)", type="csv",
                                            key="vendor", accept_multiple_files=True))
+    got_pairs = {vendor_pair_of(n) for n, _ in vendor_in} - {None}
+    label = lambda p: f"{p[0]} → {p[1]}"                                                                  # noqa: E731
+    no_file = [l for l in ev.LANGUAGES if ("English", l) not in got_pairs and ("Hindi", l) not in got_pairs]
+    selection_note({label(p) for p in got_pairs}, [label(p) for p in ev.PAIRS], "vendor files",
+                   never_ok=(no_file + ([ev.HINDI + " (English → Hindi)"] if ("English", ev.HINDI) not in got_pairs else [])) if got_pairs else ())
     st.caption("Columns: id, question, option_a, option_b, option_c, option_d. The source and the target language are read "
                "from the file name. A pair the vendor did not translate has no file; a language with no output at all gets 0 marks.")
 
@@ -304,12 +323,13 @@ if any_file:
     with st.expander(f":material/folder_open: Files found: {n_ref} of {TOTAL_LANGS} reference, {n_ven} of {TOTAL_PAIRS} vendor",
                      expanded=bool(inputs.errors)):
         found = pd.DataFrame({
-            "Language": ev.LANGUAGES,
-            "Reference file": [inputs.ref_files.get(lang, "missing") for lang in ev.LANGUAGES],
-            "Vendor: English to language": [inputs.vendor_files.get(("English", lang), "none") for lang in ev.LANGUAGES],
-            "Vendor: Hindi to language": [inputs.vendor_files.get(("Hindi", lang), "none") for lang in ev.LANGUAGES],
+            "Language": ev.LANGUAGES + [ev.HINDI],
+            "Reference file": [inputs.ref_files.get(lang, "missing") for lang in ev.LANGUAGES] + ["the Hindi source file"],
+            "Vendor: English to language": [inputs.vendor_files.get(("English", lang), "none") for lang in ev.LANGUAGES + [ev.HINDI]],
+            "Vendor: Hindi to language": [inputs.vendor_files.get(("Hindi", lang), "none") for lang in ev.LANGUAGES] + ["not tested"],
         })
-        st.dataframe(found, hide_index=True, use_container_width=True, height=36 * (TOTAL_LANGS + 1) + 3)
+        st.dataframe(found, hide_index=True, use_container_width=True, height=36 * (TOTAL_LANGS + 2) + 3,
+                     column_config={"Language": st.column_config.Column(width=200)})
         st.caption(f"Source: English {'loaded' if source_en else 'missing'}, Hindi {'loaded' if source_hi else 'missing'}.")
     for e in inputs.errors:
         st.error(e)
@@ -318,11 +338,11 @@ if any_file:
         info = validation.info
         st.markdown(f'<div class="fcard" style="margin-top:.8rem">{icon("list")}Validation summary</div>', unsafe_allow_html=True)
         c = st.columns(4)
-        c[0].metric("Questions", info["questions"])
+        c[0].metric("Questions", info["questions"], "in each source file", delta_color="off")
         c[1].metric("Expected vendor rows", info["expected_rows"],
-                    f"{info['questions']} × {info['languages']} languages × {info['directions']} directions", delta_color="off")
-        c[2].metric("Received (non-blank)", info["received_rows"])
-        c[3].metric("Missing", info["missing_rows"], "BLEU, chrF++: empty text. COMET: 0", delta_color="off")
+                    f"× {info['pairs']} language pairs", delta_color="off")
+        c[2].metric("Received (non-blank)", info["received_rows"], "rows with a translation", delta_color="off")
+        c[3].metric("Missing", info["missing_rows"], "scored as empty text", delta_color="off")
         for e in validation.errors:
             st.error(e)
 
@@ -338,7 +358,8 @@ if any_file:
         accepted = st.checkbox("Continue anyway with these blank cells (it will be written in the audit record)",
                                key=f"accept_{tag}")
 
-    notes = list(inputs.warnings) + (list(validation.warnings) if validation is not None else [])
+    notes = [w for w in list(inputs.warnings) + (list(validation.warnings) if validation is not None else [])
+             if "no vendor output at all" not in w]        # a language with no output is shown as DISQUALIFIED in the results
     if notes:
         with st.expander(f":material/warning: Warnings ({len(notes)})"):
             for w in notes:
@@ -347,25 +368,27 @@ if any_file:
         if validation.ok:
             st.success("The files match: the same question ids in every file, 13 reference languages. The evaluation can run.")
         with st.expander(":material/table_view: Vendor output received, by language and direction"):
-            st.dataframe(validation.coverage, hide_index=True, use_container_width=True, height=36 * 14 + 3)
+            st.dataframe(validation.coverage, hide_index=True, use_container_width=True, height=36 * 15 + 3,
+                         column_config={"Language": st.column_config.Column(width=220)})
 
 with st.expander(":material/help: File format help"):
     st.markdown(
         """
 All files are **CSV, UTF-8** (in Excel: Save As, "CSV UTF-8"). Every question is a multiple-choice question: the
-**question and each option (A to D) go in their own columns**. Download the sample ZIP above to see the layout.
+**question and each option (A to D) go in their own columns**. The sample_data folder on GitHub shows the layout.
 
 | Folder | Files | Columns |
 |---|---|---|
 | `source` | `source_english.csv`, `source_hindi.csv` | `id, question, option_a, option_b, option_c, option_d` |
 | `reference` | `reference_<language>.csv`, 13 files | `id, question, option_a, option_b, option_c, option_d` |
-| `vendor` | `vendor_<source>_<language>.csv`, 26 files (one per language pair) | `id, question, option_a, option_b, option_c, option_d` |
+| `vendor` | `vendor_<source>_<language>.csv`, 27 files (one per language pair) | `id, question, option_a, option_b, option_c, option_d` |
 
 - **Languages in the file names:** `assamese, bengali, gujarati, kannada, konkani, malayalam, manipuri_meitei, marathi,
   odia, punjabi, tamil, telugu, urdu`. A reference file is named like `reference_tamil.csv`.
 - **Vendor files:** the source language (`english` or `hindi`) comes first, then the target language:
   `vendor_english_tamil.csv` is English to Tamil and `vendor_hindi_tamil.csv` is Hindi to Tamil. The source and the target
-  language of a vendor file are read from its name.
+  language of a vendor file are read from its name. There is one extra pair, **English to Hindi**: `vendor_english_hindi.csv`
+  (there is no Hindi to Hindi). Its reference is the Hindi source file, so no extra reference file is needed.
 - **The `id` rule:** the `id` is the question number. Inside one file every id appears **once** (no two questions share an
   id, and `Q1` and `q1` count as the same id). The **same question has the same id in every file**: in the English and the
   Hindi source, in the 13 reference files and in all the vendor files. The two source files must have exactly the same ids.
@@ -373,7 +396,8 @@ All files are **CSV, UTF-8** (in Excel: Save As, "CSV UTF-8"). Every question is
   ignoring upper and lower case, spaces and underscores.
 
 A language pair with no vendor file (or only blank rows) has no output: the other direction of that language is used, and a
-language with no output in either direction gets **0 marks**. A missing single translation is scored as an empty sentence for
+language with no output in either direction (or no English to Hindi output) gets **0 marks and the bidder is
+disqualified**. The Hindi row is English to Hindi only (its Hi→T columns stay empty) and is averaged with the 13 languages. A missing single translation is scored as an empty sentence for
 BLEU and chrF++, and as **0 for COMET**. A vendor file whose name does not show the pair, or two files for one pair, is an
 **error** that names the file.
 """
@@ -406,9 +430,9 @@ run = st.button("Evaluate", type="primary", icon=":material/play_arrow:", disabl
 
 if run:
     bar = Progress(MODEL_ON)
-    bar.progress(0.0, "Starting")
+    bar.progress(0.0, "Starting" + (" (loading the COMET model in the background)" if MODEL_ON else ""))
     try:
-        model = get_comet() if MODEL_ON else None
+        model = ev.start_comet_loading() if MODEL_ON else None     # loads in the background while BLEU / chrF++ run
         res = ev.evaluate(
             *inputs.as_tuple(), with_comet=MODEL_ON, comet_model=model,
             run_info=dict(vendor=bidder.strip(), hashes=dict(inputs.hashes),
@@ -445,9 +469,16 @@ if saved:
         st.info("COMET was not computed (USE_MODEL is false), so the maximum is "
                 f"{s['max_total']:g} marks, not {rft.BLEU_MAX + rft.COMET_MAX + rft.CHRF_MAX}.")
 
+    if s["disqualified"]:
+        st.markdown(
+            '<div style="border:2px solid #da3633;background:rgba(218,54,51,.12);border-radius:10px;padding:.8rem 1rem;margin:.4rem 0 1rem">'
+            f'<div style="font-size:1.15rem;font-weight:800;color:#da3633">{icon("alert")}BIDDER DISQUALIFIED</div>'
+            "No output for: <b>" + ", ".join(s["disqualified_languages"]) + "</b>.<br>"
+            "A language that is not supported, or has no output, gets 0 marks and the Bidder is disqualified.</div>", unsafe_allow_html=True)
+    with st.container(key="total_box_dq" if s["disqualified"] else "total_box"):
+        st.metric("Total marks (Option B)", f"{s['total']:.2f} / {s['max_total']:g}", f"{s['pct']:.1f}%", delta_color="off")
     k = st.columns(3)
-    k[0].metric("Total (Option B)", f"{s['total']:.2f} / {s['max_total']:g}",
-                f"BLEU {s['bleu']:.2f} / {rft.BLEU_MAX}   |   {s['pct']:.1f}%", delta_color="off")
+    k[0].metric("BLEU marks", f"{s['bleu']:.2f} / {rft.BLEU_MAX}")
     if s["with_comet"]:
         k[1].metric("COMET marks", f"{s['comet']:.2f} / {rft.COMET_MAX}")
     else:
@@ -455,7 +486,7 @@ if saved:
     k[2].metric("chrF++ marks", f"{s['chrf']:.2f} / {rft.CHRF_MAX}")
 
     st.markdown(
-        '<small style="opacity:.75">Each metric\'s marks are the average over all 13 languages. '
+        '<small style="opacity:.75">Each metric\'s marks are the average over 14 rows: the 13 languages and Hindi (English to Hindi). '
         "BLEU marks use Option B. "
         "Human evaluation (15 marks) is not part of this tool.</small>",
         unsafe_allow_html=True,
@@ -472,16 +503,19 @@ if saved:
             if pd.isna(v):
                 out.append("")
             elif v >= mx:
-                out.append("background-color: rgba(46,160,67,.28)")
+                out.append("background-color: rgba(34,197,94,.45)")
             elif v <= 0:
-                out.append("background-color: rgba(218,54,51,.28)")
+                out.append("background-color: rgba(200,25,25,.50)")
             else:
                 out.append("background-color: rgba(210,153,34,.25)")
         return out
 
     def color_status(col):
-        return ["color: #da3633; font-weight: 700" if v in (ev.NO_OUTPUT, ev.NO_REFERENCE)
-                else "color: #d29922" if v != "OK" and pd.notna(v) else "" for v in col]
+        return ["color: #e53935; font-weight: 800" if v in (ev.NO_OUTPUT, ev.NO_REFERENCE) or str(v).startswith("DISQUALIFIED")
+                else "color: #22c55e; font-weight: 700" if v == "OK" or str(v).startswith("Not disqualified")
+                else "color: #d29922" if pd.notna(v) and v != "" else "" for v in col]
+
+    WIDTHS = {"Language": st.column_config.Column(width=200), "Status": st.column_config.Column(width=210)}
 
     def show(df, last_row_bold=False):
         marks = [c for c in df.columns if c in mark_max]
@@ -490,8 +524,9 @@ if saved:
         fmt.update({c: (lambda v: f"{v:.2f}".rstrip("0").rstrip(".")) for c in marks})
         styler = df.style.apply(color_marks, subset=marks).apply(color_status, subset=["Status"]).format(fmt, na_rep="–")
         if last_row_bold:
-            styler = styler.apply(lambda r: ["font-weight:700" if r.name == len(df) - 1 else ""] * len(r), axis=1)
-        st.dataframe(styler, hide_index=True, use_container_width=True, height=36 * (len(df) + 1) + 3)
+            styler = styler.apply(lambda r: ["font-weight:700" if r.name >= len(df) - 2 else ""] * len(r), axis=1)
+        styler = styler.apply(color_status, subset=["Status"])        # applied last so the red text is never overridden
+        st.dataframe(styler, hide_index=True, use_container_width=True, height=36 * (len(df) + 1) + 3, column_config=WIDTHS)
 
     if True:
         cols = ["Language", "Status", "BLEU En→T", "BLEU Hi→T", "Max BLEU", "BLEU Marks"]
@@ -502,17 +537,21 @@ if saved:
         avg = {c: view[c].mean() for c in mark_max if c in view.columns}
         avg_row = {c: float("nan") for c in view.columns}
         avg_row.update(avg)
-        avg_row["Language"] = "Average of 13 languages (marks)"
+        avg_row["Language"] = "Average of 14 (marks)"
         avg_row["Status"] = ""
-        view = pd.concat([view, pd.DataFrame([avg_row])], ignore_index=True)
+        end_row = {c: float("nan") for c in view.columns}
+        end_row["Language"] = "Disqualification check"
+        end_row["Status"] = ("DISQUALIFIED: " + ", ".join(s["disqualified_languages"])
+                             if s["disqualified"] else "Not disqualified")
+        view = pd.concat([view, pd.DataFrame([avg_row]), pd.DataFrame([end_row])], ignore_index=True)
         view["Status"] = view["Status"].astype(object)
         show(view, last_row_bold=True)
         st.markdown(
-            '<span class="dot" style="background:rgba(46,160,67,.6);margin-left:0"></span>full marks'
+            '<span class="dot" style="background:rgba(34,197,94,.8);margin-left:0"></span>full marks'
             '<span class="dot" style="background:rgba(210,153,34,.6)"></span>partial'
-            '<span class="dot" style="background:rgba(218,54,51,.6)"></span>zero'
+            '<span class="dot" style="background:rgba(200,25,25,.85)"></span>zero'
             '<br><small style="opacity:.7">Max is the higher of En→T and Hi→T. – means no output for that direction. '
-            "A language with no vendor output shows 0 for its scores and 0 marks.</small>",
+            "Hindi is tested from English only, so its Hi→T columns are empty. A language with no vendor output shows 0 for its scores and 0 marks.</small>",
             unsafe_allow_html=True,
         )
 
